@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "ai2c-assignment"
+version = "0.1.0"
+description = "Assignment for Senior ML Scientist at AI2C"
+authors = ["Nikos Mourdoukoutas <nmourdoukoutas@gmail.com>"]
+license = "[]"
+readme = "README.md"
+repository = "https://github.com/nmourdoukoutas/ai2c-assignment"
+packages = [{include = "ai2c_assignment"}]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.13"
+numpy = "^2.1.2"
+yfinance = "^0.2.48"
+pandas = "^2.2.3"
+ipykernel = "^6.29.5"
+matplotlib = "^3.9.2"
+optuna = "^4.0.0"
+scikit-learn = "^1.5.2"
+tqdm = "^4.66.6"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
