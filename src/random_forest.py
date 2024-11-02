@@ -3,6 +3,8 @@ from data_preprocessing import StockDataPreprocessor
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import fbeta_score
+import numpy as np
+import random
 
 
 class RandomForestOptimizer:
@@ -13,23 +15,27 @@ class RandomForestOptimizer:
         self.trials = None
 
         # Define hyperparameter search space
-        self.class_weight_options = ["balanced", "balanced_subsample"]
-        self.criterion_options = ["entropy", "gini"]
         self.space = {
-            "n_estimators": hp.quniform("n_estimators", 600, 1000, 1),
+            "n_estimators": hp.quniform("n_estimators", 700, 800, 1),
             "max_depth": hp.quniform("max_depth", 70, 100, 1),
             "min_samples_split": hp.quniform("min_samples_split", 5, 15, 1),
-            "min_samples_leaf": hp.quniform("min_samples_leaf", 1, 5, 1),
+            "min_samples_leaf": hp.quniform("min_samples_leaf", 1, 3, 1),
             "max_features": hp.uniform("max_features", 0.8, 1.0),
-            "max_leaf_nodes": hp.quniform("max_leaf_nodes", 400, 600, 1),
-            "min_impurity_decrease": hp.uniform("min_impurity_decrease", 0.04, 0.08),
-            "bootstrap": hp.choice("bootstrap", [True, False]),
-            "class_weight": hp.choice("class_weight", self.class_weight_options),
-            "criterion": hp.choice("criterion", self.criterion_options),
+            "max_leaf_nodes": hp.quniform("max_leaf_nodes", 500, 600, 1),
+            "min_impurity_decrease": hp.uniform("min_impurity_decrease", 0.04, 0.05),
         }
 
     def objective(self, params):
         model_params = self._process_params(params, for_training=False)
+        model_params.update(
+            {
+                "criterion": "entropy",
+                "class_weight": "balanced",
+                "bootstrap": True,
+                "random_state": 42,
+                "n_jobs": -1,
+            }
+        )
         model = RandomForestClassifier(**model_params)
         model.fit(self.X_train, self.y_train)
 
@@ -69,19 +75,13 @@ class RandomForestOptimizer:
                 "min_samples_split": int(processed_params["min_samples_split"]),
                 "min_samples_leaf": int(processed_params["min_samples_leaf"]),
                 "max_leaf_nodes": int(processed_params["max_leaf_nodes"]),
+                "criterion": "entropy",
+                "class_weight": "balanced",
+                "bootstrap": True,
                 "random_state": self.random_state,
                 "n_jobs": -1,
             }
         )
-
-        if for_training:
-            processed_params["class_weight"] = self.class_weight_options[
-                int(processed_params["class_weight"])
-            ]
-            processed_params["criterion"] = self.criterion_options[
-                int(processed_params["criterion"])
-            ]
-            processed_params["bootstrap"] = processed_params["bootstrap"] == True
 
         return processed_params
 
@@ -102,6 +102,11 @@ class RandomForestOptimizer:
 
 
 if __name__ == "__main__":
+
+    # Set random seeds for reproducibility
+    np.random.seed(42)
+    random.seed(42)
+
     # Initialize data preprocessor and load data
     preprocessor = StockDataPreprocessor(
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"

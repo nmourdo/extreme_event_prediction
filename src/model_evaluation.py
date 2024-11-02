@@ -1,6 +1,8 @@
 import pickle
 import pandas as pd
 import numpy as np
+import random
+
 from sklearn.metrics import (
     fbeta_score,
     accuracy_score,
@@ -68,6 +70,10 @@ class ModelEvaluator:
 
 if __name__ == "__main__":
 
+    # Set random seeds for reproducibility
+    np.random.seed(42)
+    random.seed(42)
+
     # Initialize data preprocessor and load data
     preprocessor = StockDataPreprocessor(
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"
@@ -80,7 +86,7 @@ if __name__ == "__main__":
         ["Open", "High", "Low", "Close", "Volume", "Daily_Returns"],
         "Extreme_Event",
         train_ratio=0.7,
-        val_ratio=0.15,
+        val_ratio=0.85,
     )
 
     # Convert time series data into supervised learning format
