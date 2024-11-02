@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+import numpy as np
 from typing import Tuple
 
 
@@ -171,6 +172,47 @@ class StockDataPreprocessor:
         ), "Features and labels must have same length"
 
         return X_transformed, y_transformed
+
+    @staticmethod
+    def create_sequences(
+        X: pd.DataFrame, y: pd.Series, lookback: int = 10
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Create sequences of lookback days for each feature, with corresponding labels.
+
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input features dataframe with datetime index
+        y : pd.Series
+            Input labels series with datetime index
+        lookback : int
+            Number of timesteps to look back (default: 10)
+
+        Returns:
+        --------
+        X_seq : numpy.ndarray
+            Array of shape [n_samples, n_features, lookback]
+        y_seq : numpy.ndarray
+            Array of labels
+        """
+        n_features = X.shape[1]
+        n_samples = len(X) - lookback
+
+        # Initialize arrays
+        X_seq = np.zeros((n_samples, n_features, lookback))
+        y_seq = np.zeros(n_samples)
+
+        # Create sequences
+        for i in range(n_samples):
+            # Get sequence of lookback days for each feature
+            sequence = X.iloc[i : i + lookback]
+            # Store features (reverse order so most recent is last)
+            X_seq[i] = sequence.T.values[:, ::-1]
+            # Store label (the extreme event flag for the next day after sequence)
+            y_seq[i] = y.iloc[i + lookback]
+
+        return X_seq, y_seq
 
     def add_features(self) -> pd.DataFrame:
         """
