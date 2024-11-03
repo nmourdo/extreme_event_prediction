@@ -1,10 +1,11 @@
 import pickle
-import pandas as pd
 import numpy as np
 import random
 import seaborn as sns
 import matplotlib.pyplot as plt
 import torch
+from typing import Union
+from sklearn.ensemble import RandomForestClassifier
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import (
     fbeta_score,
@@ -16,21 +17,31 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 
-from data_preprocessing import StockDataPreprocessor
-from temporal_cnn import TCNN
+try:
+    from src.data_preprocessing import StockDataPreprocessor
+    from src.temporal_cnn import TCNN
+except ModuleNotFoundError:
+    from data_preprocessing import StockDataPreprocessor
+    from temporal_cnn import TCNN
 
 
 class ModelEvaluator:
-    def __init__(self, model, model_type: str, batch_size: int = 32):
-        """
-        Parameters:
-        -----------
-        model : Union[RF model, TCNN]
-            The model to evaluate
+    def __init__(
+        self,
+        model: Union[RandomForestClassifier, TCNN],
+        model_type: str,
+        batch_size: int = 32,
+    ):
+        """Initialize a ModelEvaluator instance.
+
+        Parameters
+        ----------
+        model : Union[RandomForestClassifier, TCNN]
+            The model to evaluate. Can be either a Random Forest classifier or a Temporal CNN model.
         model_type : str
-            Either 'RF' or 'torch'
-        batch_size : int
-            Batch size for PyTorch model evaluation
+            The type of model being evaluated. Must be either 'RF' for Random Forest or 'TCNN' for Temporal CNN.
+        batch_size : int, optional
+            Batch size for PyTorch model evaluation, by default 32. Only used when model_type is 'TCNN'.
         """
         self.model = model
         self.model_type = model_type
@@ -39,7 +50,19 @@ class ModelEvaluator:
             self.device = model.device
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        """Unified prediction method for both model types"""
+        """Make predictions using the model.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Input features to make predictions on. For Random Forest, this should be a 2D array.
+            For TCNN, this should be a 3D array with shape (samples, timesteps, features).
+
+        Returns
+        -------
+        np.ndarray
+            Binary predictions (0 or 1) for each input sample.
+        """
         if self.model_type == "RF":
             return self.model.predict(X)
         else:
@@ -67,7 +90,28 @@ class ModelEvaluator:
             return (y_pred > 0.5).astype(int)
 
     def evaluate(self, X: np.ndarray, y: np.ndarray) -> dict:
-        """Unified evaluation method"""
+        """Evaluate the model's performance using multiple metrics.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Input features. For Random Forest, this should be a 2D array.
+            For TCNN, this should be a 3D array with shape (samples, timesteps, features).
+        y : np.ndarray
+            True labels (0 or 1) for each input sample.
+
+        Returns
+        -------
+        dict
+            Dictionary containing various performance metrics:
+            - F2 Score: F-beta score with beta=2
+            - F1 Score: Standard F1 score
+            - Precision: Precision score
+            - Recall: Recall score
+            - Accuracy: Standard accuracy
+            - AUC: Area Under the ROC Curve
+            - Balanced Accuracy: Accuracy that accounts for class imbalance
+        """
         if self.model_type == "RF":
             y_pred = self.predict(X)
         else:
@@ -112,7 +156,23 @@ class ModelEvaluator:
         return metrics
 
     def plot_confusion_matrix(self, X: np.ndarray, y: np.ndarray, ax=None) -> None:
-        """Plot confusion matrix with optional axis specification"""
+        """Plot a confusion matrix for the model's predictions.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            Input features. For Random Forest, this should be a 2D array.
+            For TCNN, this should be a 3D array with shape (samples, timesteps, features).
+        y : np.ndarray
+            True labels (0 or 1) for each input sample.
+        ax : matplotlib.axes.Axes, optional
+            The axes on which to plot the confusion matrix. If None, a new figure is created.
+
+        Returns
+        -------
+        None
+            The function displays the confusion matrix plot but doesn't return anything.
+        """
         y_pred = self.predict(X)
         y_true = y.astype(int)
 

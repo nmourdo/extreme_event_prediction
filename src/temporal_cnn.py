@@ -6,7 +6,11 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from torch.utils.data import DataLoader, TensorDataset
-from data_preprocessing import StockDataPreprocessor
+
+try:
+    from src.data_preprocessing import StockDataPreprocessor
+except ModuleNotFoundError:
+    from data_preprocessing import StockDataPreprocessor
 
 
 class TCNN(L.LightningModule):
