@@ -18,11 +18,11 @@ class TCNN(L.LightningModule):
         self,
         n_features: int,
         lookback: int,
-        hidden_dim: int = 64,
-        conv_channels: int = 32,
+        hidden_dim: int = 128,
+        conv_channels: int = 64,
         kernel_size: int = 3,
-        dropout_prob: float = 0.2,
-        learning_rate: float = 1e-3,
+        dropout_prob: float = 0.3,
+        learning_rate: float = 1e-4,
     ):
         """
         Parameters:
@@ -267,8 +267,8 @@ if __name__ == "__main__":
     predictor = ExtremeEventNNPredictor(
         n_features=X_train.shape[1],
         lookback=X_train.shape[2],
-        hidden_dim=128,
-        conv_channels=64,
+        hidden_dim=64,
+        conv_channels=96,
         kernel_size=3,
         dropout_prob=0.3,
         learning_rate=1e-4,

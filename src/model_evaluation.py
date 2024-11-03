@@ -281,13 +281,17 @@ if __name__ == "__main__":
         model=pickle.load(open("models/best_random_forest.pkl", "rb")),
         model_type="RF",
     )
-
-    nn = TCNN.load_from_checkpoint(
-        "checkpoints/best_model-v1.ckpt",
+    nn = TCNN(
         n_features=X_test_seq.shape[1],
         lookback=10,
-        hparams_file="logs/tcnn/version_1/hparams.yaml",
+        hidden_dim=128,
+        conv_channels=64,
+        kernel_size=3,
+        dropout_prob=0.3,
+        learning_rate=1e-4,
     )
+    nn.load_state_dict(torch.load("models/best_nn.pth"))
+    nn.eval()
     nn_evaluator = ModelEvaluator(model=nn, model_type="TCNN")
 
     # Prepare evaluators and data dictionaries
