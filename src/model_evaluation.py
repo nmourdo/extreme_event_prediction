@@ -283,7 +283,10 @@ if __name__ == "__main__":
     )
 
     nn = TCNN.load_from_checkpoint(
-        "checkpoints/best_model.ckpt", n_features=X_test_seq.shape[1], lookback=10
+        "checkpoints/best_model-v1.ckpt",
+        n_features=X_test_seq.shape[1],
+        lookback=10,
+        hparams_file="logs/tcnn/version_1/hparams.yaml",
     )
     nn_evaluator = ModelEvaluator(model=nn, model_type="TCNN")
 

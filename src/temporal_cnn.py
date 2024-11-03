@@ -267,14 +267,14 @@ if __name__ == "__main__":
     predictor = ExtremeEventNNPredictor(
         n_features=X_train.shape[1],
         lookback=X_train.shape[2],
-        hidden_dim=64,
-        conv_channels=32,
+        hidden_dim=128,
+        conv_channels=64,
         kernel_size=3,
-        dropout_prob=0.2,
-        learning_rate=1e-3,
+        dropout_prob=0.3,
+        learning_rate=1e-4,
     )
     checkpoint_callback = predictor.train(
-        X_train, y_train, X_val, y_val, batch_size=32, max_epochs=100, patience=10
+        X_train, y_train, X_val, y_val, batch_size=32, max_epochs=100, patience=20
     )
 
     # Plot training history
