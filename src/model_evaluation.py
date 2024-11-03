@@ -25,22 +25,22 @@ class ModelEvaluator:
         """
         Parameters:
         -----------
-        model : Union[sklearn model, TCNN]
+        model : Union[RF model, TCNN]
             The model to evaluate
         model_type : str
-            Either 'sklearn' or 'torch'
+            Either 'RF' or 'torch'
         batch_size : int
             Batch size for PyTorch model evaluation
         """
         self.model = model
         self.model_type = model_type
         self.batch_size = batch_size
-        if model_type == "torch":
+        if model_type == "TCNN":
             self.device = model.device
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Unified prediction method for both model types"""
-        if self.model_type == "sklearn":
+        if self.model_type == "RF":
             return self.model.predict(X)
         else:
             # Create dataset and dataloader for batched predictions
@@ -68,7 +68,7 @@ class ModelEvaluator:
 
     def evaluate(self, X: np.ndarray, y: np.ndarray) -> dict:
         """Unified evaluation method"""
-        if self.model_type == "sklearn":
+        if self.model_type == "RF":
             y_pred = self.predict(X)
         else:
             # Create dataset and dataloader for batched predictions
@@ -219,13 +219,13 @@ if __name__ == "__main__":
     # Initialize evaluators
     rf_evaluator = ModelEvaluator(
         model=pickle.load(open("models/best_random_forest.pkl", "rb")),
-        model_type="sklearn",
+        model_type="RF",
     )
 
     nn = TCNN.load_from_checkpoint(
         "checkpoints/best_model.ckpt", n_features=X_test_seq.shape[1], lookback=10
     )
-    nn_evaluator = ModelEvaluator(model=nn, model_type="torch")
+    nn_evaluator = ModelEvaluator(model=nn, model_type="TCNN")
 
     # Prepare evaluators and data dictionaries
     evaluators = {"Random Forest": rf_evaluator, "Neural Network": nn_evaluator}

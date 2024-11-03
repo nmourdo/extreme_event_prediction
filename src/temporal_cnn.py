@@ -3,6 +3,7 @@ import random
 import lightning as L
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from torch.utils.data import DataLoader, TensorDataset
 from data_preprocessing import StockDataPreprocessor
@@ -16,6 +17,7 @@ class TCNN(L.LightningModule):
         hidden_dim: int = 64,
         conv_channels: int = 32,
         kernel_size: int = 3,
+        dropout_prob: float = 0.2,
         learning_rate: float = 1e-3,
     ):
         """
@@ -35,7 +37,12 @@ class TCNN(L.LightningModule):
             Learning rate for optimizer
         """
         super().__init__()
+        # Save hyperparameters
+        self.save_hyperparameters()
+
         self.learning_rate = learning_rate
+        self.train_losses = []
+        self.val_losses = []
 
         # Definition of the CNN architecture
         self.cnn = nn.Sequential(
@@ -45,17 +52,20 @@ class TCNN(L.LightningModule):
                 kernel_size=kernel_size,
             ),
             nn.ReLU(),
+            nn.Dropout(p=dropout_prob),
             nn.Conv1d(
                 in_channels=conv_channels,
                 out_channels=conv_channels * 2,
                 kernel_size=kernel_size,
             ),
             nn.ReLU(),
+            nn.Dropout(p=dropout_prob),
             nn.Flatten(),
             nn.Linear(
                 (conv_channels * 2) * (lookback - 2 * kernel_size + 2), hidden_dim
             ),
             nn.ReLU(),
+            nn.Dropout(p=dropout_prob),
             nn.Linear(hidden_dim, 1),
         )
 
@@ -86,6 +96,8 @@ class TCNN(L.LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = nn.BCELoss()(y_hat, y.float().view(-1, 1))
+        # Store training loss
+        self.train_losses.append(loss.item())
         self.log("train_loss", loss, prog_bar=True)
         return loss
 
@@ -103,6 +115,8 @@ class TCNN(L.LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = nn.BCELoss()(y_hat, y.float().view(-1, 1))
+        # Store validation loss
+        self.val_losses.append(loss.item())
         self.log("val_loss", loss, prog_bar=True)
         return loss
 
@@ -116,91 +130,102 @@ class TCNN(L.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
 
 
-def train_tcnn_model(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
-    batch_size: int = 32,
-    max_epochs: int = 100,
-    patience: int = 10,
-    learning_rate: float = 1e-3,
-) -> TCNN:
-    """
-    Train the CNN model with early stopping and model checkpointing.
+class ExtremeEventNNPredictor:
+    def __init__(
+        self,
+        n_features: int,
+        lookback: int,
+        hidden_dim: int = 64,
+        conv_channels: int = 32,
+        kernel_size: int = 3,
+        dropout_prob: float = 0.2,
+        learning_rate: float = 1e-3,
+    ) -> None:
+        self.model = TCNN(
+            n_features=n_features,
+            lookback=lookback,
+            hidden_dim=hidden_dim,
+            conv_channels=conv_channels,
+            kernel_size=kernel_size,
+            dropout_prob=dropout_prob,
+            learning_rate=learning_rate,
+        )
 
-    Parameters:
-    -----------
-    X_train : np.ndarray
-        Training features of shape [n_samples, n_features, lookback]
-    y_train : np.ndarray
-        Training labels
-    X_val : np.ndarray
-        Validation features
-    y_val : np.ndarray
-        Validation labels
-    batch_size : int
-        Batch size for training
-    max_epochs : int
-        Maximum number of epochs to train
-    patience : int
-        Number of epochs to wait for improvement before early stopping
-    learning_rate : float
-        Learning rate for optimizer
+    def train(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        batch_size: int = 32,
+        max_epochs: int = 100,
+        patience: int = 10,
+    ) -> ModelCheckpoint:
+        """Train the CNN model with early stopping and model checkpointing."""
+        # Numpy arrays to torch tensors
+        train_dataset = TensorDataset(
+            torch.FloatTensor(X_train), torch.FloatTensor(y_train)
+        )
+        val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
 
-    Returns:
-    --------
-    StockCNN
-        Trained model
-    """
-    # Numpy arrays to torch tensors
-    train_dataset = TensorDataset(
-        torch.FloatTensor(X_train), torch.FloatTensor(y_train)
-    )
-    val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
+        # Data loaders
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-    # Data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        # Early stopping and best model checkpointing callbacks
+        early_stopping = EarlyStopping(
+            monitor="val_loss", patience=patience, mode="min"
+        )
+        checkpoint_callback = ModelCheckpoint(
+            dirpath="checkpoints",
+            filename="best_model",
+            save_top_k=1,
+            monitor="val_loss",
+            mode="min",
+            save_last=True,
+        )
 
-    # Model initialization
-    model = TCNN(
-        n_features=X_train.shape[1],
-        lookback=X_train.shape[2],
-        learning_rate=learning_rate,
-    )
+        logger = L.pytorch.loggers.CSVLogger("logs", name="tcnn")
 
-    # Callbacks
-    early_stopping = EarlyStopping(monitor="val_loss", patience=patience, mode="min")
+        # Trainer
+        trainer = L.Trainer(
+            max_epochs=max_epochs,
+            callbacks=[early_stopping, checkpoint_callback],
+            accelerator="auto",
+            devices=1,
+            logger=logger,
+        )
 
-    checkpoint_callback = ModelCheckpoint(
-        dirpath="checkpoints",
-        filename="best_model",
-        save_top_k=1,
-        monitor="val_loss",
-        mode="min",
-    )
+        # Train model
+        trainer.fit(
+            self.model, train_dataloaders=train_loader, val_dataloaders=val_loader
+        )
+        return checkpoint_callback
 
-    # Trainer
-    trainer = L.Trainer(
-        max_epochs=max_epochs,
-        callbacks=[early_stopping, checkpoint_callback],
-        accelerator="auto",
-        devices=1,
-    )
+    def plot_training_history(self) -> None:
+        """Plot training and validation losses."""
 
-    # Train model
-    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
+        plt.figure(figsize=(10, 6))
 
-    # Load best model
-    best_model = TCNN.load_from_checkpoint(
-        checkpoint_callback.best_model_path,
-        n_features=X_train.shape[1],
-        lookback=X_train.shape[2],
-        learning_rate=learning_rate,
-    )
+        # Plot raw losses
+        plt.plot(
+            range(len(self.model.train_losses)),
+            self.model.train_losses,
+            "b-",
+            label="Training Loss",
+        )
 
-    return best_model
+        # Adjust validation loss x-axis to match actual validation frequency
+        val_freq = len(self.model.train_losses) / len(self.model.val_losses)
+        val_x = [int(i * val_freq) for i in range(len(self.model.val_losses))]
+        plt.plot(val_x, self.model.val_losses, "r-", label="Validation Loss")
+
+        plt.title("Training and Validation Loss")
+        plt.xlabel("Training Steps")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
 
 
 if __name__ == "__main__":
@@ -214,6 +239,11 @@ if __name__ == "__main__":
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"
     )
     stock_prices = preprocessor.download_and_prepare_stock_data()
+    # Standardize the features except for the daily returns,
+    # which is already in a similar scale
+    stock_prices = preprocessor.standardize_data(
+        stock_prices, ["Open", "High", "Low", "Close", "Volume"]
+    )
 
     # Split data into train, validation and test sets
     X_train, y_train, X_val, y_val, X_test, y_test = preprocessor.split_data(
@@ -230,6 +260,18 @@ if __name__ == "__main__":
     X_test, y_test = preprocessor.create_sequences(X_test, y_test, lookback=10)
 
     # Train the model
-    model = train_tcnn_model(
+    predictor = ExtremeEventNNPredictor(
+        n_features=X_train.shape[1],
+        lookback=X_train.shape[2],
+        hidden_dim=64,
+        conv_channels=32,
+        kernel_size=3,
+        dropout_prob=0.2,
+        learning_rate=1e-3,
+    )
+    checkpoint_callback = predictor.train(
         X_train, y_train, X_val, y_val, batch_size=32, max_epochs=100, patience=10
     )
+
+    # Plot training history
+    predictor.plot_training_history()
