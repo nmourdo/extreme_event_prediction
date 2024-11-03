@@ -251,36 +251,43 @@ if __name__ == "__main__":
     random.seed(42)
     torch.manual_seed(42)
 
-    # Initialize data preprocessor and load data
+    # Prepare test data for random forest and initialize evaluator
     preprocessor = StockDataPreprocessor(
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"
     )
     stock_prices = preprocessor.download_and_prepare_stock_data()
 
-    # Split data into train, validation and test sets
-    X_train, y_train, X_val, y_val, X_test, y_test = preprocessor.split_data(
+    _, _, _, _, X_test, y_test = preprocessor.split_data(
         stock_prices,
         ["Open", "High", "Low", "Close", "Volume", "Daily_Returns"],
         "Extreme_Event",
         train_ratio=0.7,
         val_ratio=0.85,
     )
-
-    # Store original array format for NN
-    X_test_seq, y_test_seq = preprocessor.create_sequences(X_test, y_test, lookback=10)
-
-    # Convert time series data into supervised learning format
-    X_train, y_train = preprocessor.time_series_to_supervised(
-        X_train, y_train, lookback=10
-    )
-    X_val, y_val = preprocessor.time_series_to_supervised(X_val, y_val, lookback=10)
     X_test, y_test = preprocessor.time_series_to_supervised(X_test, y_test, lookback=10)
 
-    # Initialize evaluators
     rf_evaluator = ModelEvaluator(
         model=pickle.load(open("models/best_random_forest.pkl", "rb")),
         model_type="RF",
     )
+
+    # Prepare test data for neural network and initialize evaluator
+    stock_prices_standardized = preprocessor.standardize_data(
+        stock_prices, ["Open", "High", "Low", "Close", "Volume"]
+    )
+    _, _, _, _, X_test_seq, y_test_seq = preprocessor.split_data(
+        stock_prices_standardized,
+        ["Open", "High", "Low", "Close", "Volume", "Daily_Returns"],
+        "Extreme_Event",
+        train_ratio=0.7,
+        val_ratio=0.85,
+    )
+    X_test_seq, y_test_seq = preprocessor.create_sequences(
+        X_test_seq,
+        y_test_seq,
+        lookback=10,
+    )
+
     nn = TCNN(
         n_features=X_test_seq.shape[1],
         lookback=10,
