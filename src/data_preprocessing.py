@@ -2,6 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from typing import Tuple
+from sklearn.preprocessing import StandardScaler
 
 
 class StockDataPreprocessor:
@@ -45,6 +46,26 @@ class StockDataPreprocessor:
         # Remove the last row as it is a NaN value
         self.data = self.data.dropna()
         return self.data
+
+    @staticmethod
+    def standardize_data(
+        data: pd.DataFrame, feature_columns: list[str]
+    ) -> pd.DataFrame:
+        """
+        Standardize the data for the given feature columns. Each feature from the transformed
+        data will have a mean of 0 and a standard deviation of 1.
+
+        Args:
+            data (pd.DataFrame): Input DataFrame
+            feature_columns (list[str]): List of column names to standardize
+
+        Returns:
+            pd.DataFrame: Standardized DataFrame
+        """
+        scaler = StandardScaler()
+        df = data.copy()
+        df[feature_columns] = scaler.fit_transform(df[feature_columns])
+        return df
 
     @staticmethod
     def split_data(
