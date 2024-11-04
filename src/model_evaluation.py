@@ -193,6 +193,8 @@ class ModelEvaluator:
         ax.set_title(f"Confusion Matrix - {self.model_type}")
         ax.set_ylabel("True Label")
         ax.set_xlabel("Predicted Label")
+        plt.tight_layout()
+        plt.show()
 
 
 def compare_models(evaluators: dict, data_dict: dict):

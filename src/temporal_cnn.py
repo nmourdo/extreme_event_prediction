@@ -13,6 +13,134 @@ except ModuleNotFoundError:
     from data_preprocessing import StockDataPreprocessor
 
 
+class ExtremeEventDeepClassifier:
+    def __init__(
+        self,
+        model_type: str,  # "tcnn" or "lstm"
+        n_features: int,
+        lookback: int,
+        hidden_dim: int = 128,
+        learning_rate: float = 1e-4,
+        dropout_prob: float = 0.3,
+        **model_kwargs,
+    ) -> None:
+        """
+        Classifier class for extreme event prediction models.
+
+        Args:
+            model_type: Type of model to use ("tcnn" or "lstm")
+            n_features: Number of input features
+            lookback: Number of timesteps to look back
+            hidden_dim: Dimension of hidden layer
+            learning_rate: Learning rate for optimizer
+            dropout_prob: Dropout probability
+            **model_kwargs: Additional model-specific arguments:
+                - For TCNN: conv_channels, kernel_size
+                - For LSTM: num_layers
+        """
+        # Initialize model based on type
+        if model_type.lower() == "tcnn":
+            self.model = TCNN(
+                n_features=n_features,
+                lookback=lookback,
+                hidden_dim=hidden_dim,
+                learning_rate=learning_rate,
+                dropout_prob=dropout_prob,
+                conv_channels=model_kwargs.get("conv_channels", 64),
+                kernel_size=model_kwargs.get("kernel_size", 3),
+            )
+        elif model_type.lower() == "lstm":
+            self.model = LSTM(
+                n_features=n_features,
+                lookback=lookback,
+                hidden_dim=hidden_dim,
+                learning_rate=learning_rate,
+                dropout_prob=dropout_prob,
+                num_layers=model_kwargs.get("num_layers", 2),
+            )
+        else:
+            raise ValueError(
+                f"Unknown model type: {model_type}. Choose 'tcnn' or 'lstm'"
+            )
+
+    def train(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        batch_size: int = 32,
+        max_epochs: int = 100,
+        patience: int = 10,
+    ) -> ModelCheckpoint:
+        """Train the model with early stopping and model checkpointing."""
+        # Numpy arrays to torch tensors
+        train_dataset = TensorDataset(
+            torch.FloatTensor(X_train), torch.FloatTensor(y_train)
+        )
+        val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
+
+        # Data loaders
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+        # Early stopping and best model checkpointing callbacks
+        early_stopping = EarlyStopping(
+            monitor="val_loss", patience=patience, mode="min"
+        )
+        checkpoint_callback = ModelCheckpoint(
+            dirpath="checkpoints",
+            filename=f"best_{self.model.__class__.__name__.lower()}_model",
+            save_top_k=1,
+            monitor="val_loss",
+            mode="min",
+            save_last=True,
+        )
+
+        logger = L.pytorch.loggers.CSVLogger(
+            "logs", name=self.model.__class__.__name__.lower()
+        )
+
+        # Trainer
+        trainer = L.Trainer(
+            max_epochs=max_epochs,
+            callbacks=[early_stopping, checkpoint_callback],
+            accelerator="auto",
+            devices=1,
+            logger=logger,
+        )
+
+        # Train model
+        trainer.fit(
+            self.model, train_dataloaders=train_loader, val_dataloaders=val_loader
+        )
+        return checkpoint_callback
+
+    def plot_training_history(self) -> None:
+        """Plot training and validation losses."""
+        plt.figure(figsize=(10, 6))
+
+        # Plot raw losses
+        plt.plot(
+            range(len(self.model.train_losses)),
+            self.model.train_losses,
+            "b-",
+            label="Training Loss",
+        )
+
+        # Adjust validation loss x-axis to match actual validation frequency
+        val_freq = len(self.model.train_losses) / len(self.model.val_losses)
+        val_x = [int(i * val_freq) for i in range(len(self.model.val_losses))]
+        plt.plot(val_x, self.model.val_losses, "r-", label="Validation Loss")
+
+        plt.title("Training and Validation Loss")
+        plt.xlabel("Training Steps")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+
 class TCNN(L.LightningModule):
     def __init__(
         self,
@@ -23,7 +151,7 @@ class TCNN(L.LightningModule):
         kernel_size: int = 3,
         dropout_prob: float = 0.3,
         learning_rate: float = 1e-4,
-    ):
+    ) -> None:
         """
         Parameters:
         -----------
@@ -134,102 +262,115 @@ class TCNN(L.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
 
 
-class ExtremeEventNNPredictor:
+class LSTM(L.LightningModule):
     def __init__(
         self,
         n_features: int,
         lookback: int,
-        hidden_dim: int = 64,
-        conv_channels: int = 32,
-        kernel_size: int = 3,
-        dropout_prob: float = 0.2,
-        learning_rate: float = 1e-3,
+        hidden_dim: int = 128,
+        num_layers: int = 2,
+        dropout_prob: float = 0.3,
+        learning_rate: float = 1e-4,
     ) -> None:
-        self.model = TCNN(
-            n_features=n_features,
-            lookback=lookback,
-            hidden_dim=hidden_dim,
-            conv_channels=conv_channels,
-            kernel_size=kernel_size,
-            dropout_prob=dropout_prob,
-            learning_rate=learning_rate,
+        """
+        LSTM model for extreme event prediction.
+
+        Parameters:
+        -----------
+        n_features : int
+            Number of input features
+        lookback : int
+            Number of timesteps to look back
+        hidden_dim : int
+            Dimension of LSTM hidden state
+        num_layers : int
+            Number of LSTM layers
+        dropout_prob : float
+            Dropout probability (applied between LSTM layers and before final layer)
+        learning_rate : float
+            Learning rate for optimizer
+        """
+        super().__init__()
+        # Save hyperparameters
+        self.save_hyperparameters()
+
+        self.learning_rate = learning_rate
+        self.train_losses = []
+        self.val_losses = []
+
+        # LSTM and following layers should be separate
+        self.lstm = nn.LSTM(
+            input_size=n_features,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            dropout=dropout_prob if num_layers > 1 else 0,
+            batch_first=True,
         )
 
-    def train(
-        self,
-        X_train: np.ndarray,
-        y_train: np.ndarray,
-        X_val: np.ndarray,
-        y_val: np.ndarray,
-        batch_size: int = 32,
-        max_epochs: int = 100,
-        patience: int = 10,
-    ) -> ModelCheckpoint:
-        """Train the CNN model with early stopping and model checkpointing."""
-        # Numpy arrays to torch tensors
-        train_dataset = TensorDataset(
-            torch.FloatTensor(X_train), torch.FloatTensor(y_train)
-        )
-        val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
-
-        # Data loaders
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-        # Early stopping and best model checkpointing callbacks
-        early_stopping = EarlyStopping(
-            monitor="val_loss", patience=patience, mode="min"
-        )
-        checkpoint_callback = ModelCheckpoint(
-            dirpath="checkpoints",
-            filename="best_model",
-            save_top_k=1,
-            monitor="val_loss",
-            mode="min",
-            save_last=True,
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1),
+            nn.Sigmoid(),
         )
 
-        logger = L.pytorch.loggers.CSVLogger("logs", name="tcnn")
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # LSTM expects input of shape (batch_size, seq_len, features)
+        lstm_out, _ = self.lstm(x)
 
-        # Trainer
-        trainer = L.Trainer(
-            max_epochs=max_epochs,
-            callbacks=[early_stopping, checkpoint_callback],
-            accelerator="auto",
-            devices=1,
-            logger=logger,
-        )
+        # Use only the last output for prediction
+        last_output = lstm_out[:, -1, :]
 
-        # Train model
-        trainer.fit(
-            self.model, train_dataloaders=train_loader, val_dataloaders=val_loader
-        )
-        return checkpoint_callback
+        # Pass through classifier layers
+        return self.classifier(last_output)
 
-    def plot_training_history(self) -> None:
-        """Plot training and validation losses."""
+    def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """
+        Performs a single training step.
 
-        plt.figure(figsize=(10, 6))
+        Args:
+            batch: Tuple of (features, labels)
+            batch_idx: Index of current batch
 
-        # Plot raw losses
-        plt.plot(
-            range(len(self.model.train_losses)),
-            self.model.train_losses,
-            "b-",
-            label="Training Loss",
-        )
+        Returns:
+            Training loss value
+        """
+        x, y = batch
+        y_hat = self(x)
+        loss = nn.BCELoss()(y_hat, y.float().view(-1, 1))
+        # Store training loss
+        self.train_losses.append(loss.item())
+        self.log("train_loss", loss, prog_bar=True)
+        return loss
 
-        # Adjust validation loss x-axis to match actual validation frequency
-        val_freq = len(self.model.train_losses) / len(self.model.val_losses)
-        val_x = [int(i * val_freq) for i in range(len(self.model.val_losses))]
-        plt.plot(val_x, self.model.val_losses, "r-", label="Validation Loss")
+    def validation_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """
+        Performs a single validation step.
 
-        plt.title("Training and Validation Loss")
-        plt.xlabel("Training Steps")
-        plt.ylabel("Loss")
-        plt.legend()
-        plt.grid(True)
-        plt.show()
+        Args:
+            batch: Tuple of (features, labels)
+            batch_idx: Index of current batch
+
+        Returns:
+            Validation loss value
+        """
+        x, y = batch
+        y_hat = self(x)
+        loss = nn.BCELoss()(y_hat, y.float().view(-1, 1))
+        # Store validation loss
+        self.val_losses.append(loss.item())
+        self.log("val_loss", loss, prog_bar=True)
+        return loss
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        """
+        Configures the optimizer for training.
+
+        Returns:
+            AdamW optimizer instance
+        """
+        return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
 
 
 if __name__ == "__main__":
@@ -264,7 +405,8 @@ if __name__ == "__main__":
     X_test, y_test = preprocessor.create_sequences(X_test, y_test, lookback=10)
 
     # Train the model
-    predictor = ExtremeEventNNPredictor(
+    predictor = ExtremeEventDeepClassifier(
+        model_type="tcnn",
         n_features=X_train.shape[1],
         lookback=X_train.shape[2],
         hidden_dim=64,
