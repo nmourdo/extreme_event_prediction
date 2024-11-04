@@ -1,10 +1,14 @@
 import pickle
-from data_preprocessing import StockDataPreprocessor
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import fbeta_score
 import numpy as np
 import random
+
+try:
+    from src.data_preprocessing import StockDataPreprocessor
+except ModuleNotFoundError:
+    from data_preprocessing import StockDataPreprocessor
 
 
 class RandomForestOptimizer:

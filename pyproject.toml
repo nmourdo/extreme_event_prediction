@@ -24,6 +24,7 @@ setuptools = "^75.3.0"
 seaborn = "^0.13.2"
 torch = "^2.5.1"
 lightning = "^2.4.0"
+ray = {extras = ["data", "serve", "train", "tune"], version = "^2.38.0"}
 
 
 [build-system]

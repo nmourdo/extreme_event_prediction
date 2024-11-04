@@ -240,7 +240,8 @@ class StockDataPreprocessor:
         Add new features to the existing DataFrame
 
         Returns:
-            pd.DataFrame: DataFrame with added features: rolling_volatility, relative_volume, and VIX
+            pd.DataFrame: DataFrame with added features: rolling_volatility, relative_volume, VIX,
+            bollinger_band_width, and ATR
         """
         # 1. 10-day Rolling Volatility
         returns = self.data["Close"].pct_change()
@@ -253,6 +254,19 @@ class StockDataPreprocessor:
         # 3. Download VIX and add directly
         vix = yf.download("^VIX", start=self.start_date, end=self.end_date)["Close"]
         self.data["VIX"] = vix
+
+        # 4. Bollinger Band Width
+        sma = self.data["Close"].rolling(window=10).mean()
+        std = self.data["Close"].rolling(window=10).std()
+        self.data["bollinger_band_width"] = (2 * std) / sma  # Normalized by price level
+
+        # 5. Average True Range (ATR)
+        high_low = self.data["High"] - self.data["Low"]
+        high_close = abs(self.data["High"] - self.data["Close"].shift())
+        low_close = abs(self.data["Low"] - self.data["Close"].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = ranges.max(axis=1)
+        self.data["ATR"] = true_range.rolling(window=10).mean()
 
         # Drop rows with NaN values from the rolling calculations
         self.data = self.data.dropna()
