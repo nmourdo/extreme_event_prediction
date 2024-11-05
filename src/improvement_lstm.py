@@ -1,13 +1,28 @@
-import numpy as np
+# Standard library imports
+import os
+import json
 import random
+from datetime import datetime
+
+# Third party imports
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import matplotlib.pyplot as plt
 import lightning as L
 from torch.utils.data import DataLoader, TensorDataset
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 
+# Ray imports
+import ray
+from ray import tune
+from ray.tune.schedulers import ASHAScheduler
+from ray.tune.integration.pytorch_lightning import TuneReportCheckpointCallback
+from ray.tune import CLIReporter
+from ray.tune.search.optuna import OptunaSearch
+from ray.tune.search import ConcurrencyLimiter  # Optional but recommended
+
+# Local imports
 try:
     from src.data_preprocessing import StockDataPreprocessor
 except ModuleNotFoundError:
@@ -120,6 +135,43 @@ class LSTMClassifier:
         plt.legend()
         plt.grid(True)
         plt.show()
+
+    def train_tune(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        config: dict,
+        max_epochs: int = 100,
+    ) -> None:
+        """Train the model with Ray Tune hyperparameter optimization."""
+        train_dataset = TensorDataset(
+            torch.FloatTensor(X_train), torch.FloatTensor(y_train)
+        )
+        val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
+
+        train_loader = DataLoader(
+            train_dataset, batch_size=config["batch_size"], shuffle=False
+        )
+        val_loader = DataLoader(
+            val_dataset, batch_size=config["batch_size"], shuffle=False
+        )
+
+        tune_callback = TuneReportCheckpointCallback(
+            metrics={"loss": "val_loss"},
+            filename="checkpoint",
+        )
+
+        trainer = L.Trainer(
+            max_epochs=max_epochs,
+            callbacks=[tune_callback],
+            accelerator="auto",
+            devices=1,
+            enable_progress_bar=False,  # Disable for cleaner Ray Tune output
+        )
+
+        trainer.fit(self.model, train_loader, val_loader)
 
 
 class LSTM(L.LightningModule):
@@ -301,27 +353,137 @@ if __name__ == "__main__":
     X_val = np.transpose(X_val, (0, 2, 1))
     X_test = np.transpose(X_test, (0, 2, 1))
 
-    # Train the model
-    lstm_classifier = LSTMClassifier(
+    # Define the hyperparameter search space
+    config = {
+        "hidden_dim": tune.choice([64, 128, 256]),
+        "num_layers": tune.choice([2, 3, 4]),
+        "dropout_prob": tune.uniform(0.1, 0.5),
+        "learning_rate": tune.loguniform(1e-4, 1e-2),
+        "batch_size": tune.choice([16, 32, 64]),
+    }
+
+    # Initialize Ray
+    ray.init()
+
+    # Create OptunaSearch algorithm
+    search_alg = OptunaSearch(metric="loss", mode="min")
+
+    # Limit concurrent trials (optional but recommended for BayesOpt)
+    search_alg = ConcurrencyLimiter(
+        search_alg, max_concurrent=4  # Adjust based on your available resources
+    )
+
+    # Define the scheduler
+    scheduler = ASHAScheduler(
+        max_t=100,
+        grace_period=10,
+        reduction_factor=2,
+    )
+
+    # Run hyperparameter optimization
+    def tune_lstm(config):
+        lstm_classifier = LSTMClassifier(
+            n_features=X_train.shape[2],
+            lookback=X_train.shape[1],
+            hidden_dim=config["hidden_dim"],
+            num_layers=config["num_layers"],
+            dropout_prob=config["dropout_prob"],
+            learning_rate=config["learning_rate"],
+        )
+        lstm_classifier.train_tune(
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            config=config,
+            max_epochs=100,
+        )
+
+    # Create a custom reporter that shows only one table
+    reporter = CLIReporter(
+        parameter_columns=[
+            "hidden_dim",
+            "num_layers",
+            "dropout_prob",
+            "learning_rate",
+            "batch_size",
+        ],
+        metric_columns=["loss", "training_iteration"],
+        max_progress_rows=10,  # Show only top 10 trials
+        max_report_frequency=30,
+        print_intermediate_tables=False,  # Update every 30 seconds
+    )
+
+    # Create necessary directories
+    base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
+    results_dir = os.path.join(
+        base_dir, "..", "results"
+    )  # Go up one level and create results
+    tune_dir = os.path.join(
+        results_dir, "tune_results", f"tune_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
+
+    # Create directories if they don't exist
+    os.makedirs(tune_dir, exist_ok=True)
+    os.makedirs(os.path.join(tune_dir, "checkpoints"), exist_ok=True)
+    os.makedirs(os.path.join(tune_dir, "logs"), exist_ok=True)
+
+    # Update tune.run to use BayesOpt
+    analysis = tune.run(
+        tune_lstm,
+        config=config,
+        search_alg=search_alg,  # Add search algorithm
+        scheduler=scheduler,
+        num_samples=20,  # Increase number of samples for better optimization
+        metric="loss",
+        mode="min",
+        storage_path=tune_dir,
+        name="lstm_tuning",
+        progress_reporter=reporter,
+        verbose=0,
+        log_to_file=True,
+    )
+
+    # Get the best hyperparameters
+    best_config = analysis.get_best_config(metric="loss", mode="min")
+    print("Best hyperparameters:", best_config)
+
+    # Save the best hyperparameters
+    best_config_path = os.path.join(tune_dir, "best_config.json")
+    with open(best_config_path, "w") as f:
+        json.dump(best_config, f, indent=4)
+
+    # Save the trial results summary
+    results_df = analysis.results_df
+    results_df.to_csv(os.path.join(tune_dir, "all_trials.csv"))
+
+    # Remove batch_size from config before initializing model
+    batch_size = best_config.pop("batch_size")  # Store batch_size separately
+
+    # Train the final model with the best hyperparameters
+    best_lstm = LSTMClassifier(
         n_features=X_train.shape[2],
         lookback=X_train.shape[1],
-        hidden_dim=128,
-        num_layers=3,
-        dropout_prob=0.5,
-        learning_rate=1e-3,
+        **best_config,  # Now without batch_size
     )
-    checkpoint_callback = lstm_classifier.train(
-        X_train, y_train, X_val, y_val, batch_size=32, max_epochs=100, patience=20
+    checkpoint_callback = best_lstm.train(
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+        batch_size=batch_size,  # Pass batch_size as a separate parameter
+        max_epochs=100,
+        patience=20,
     )
 
     # Plot training history
-    lstm_classifier.plot_training_history()
+    best_lstm.plot_training_history()
 
     # Evaluate the model
     from model_evaluation import ModelEvaluator
 
     lstm_evaluator = ModelEvaluator(
-        model=lstm_classifier.model,
+        model=best_lstm.model,
         model_type="LSTM",
     )
     metrics = lstm_evaluator.evaluate(X_test, y_test)
