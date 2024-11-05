@@ -1,13 +1,19 @@
 import pickle
 import numpy as np
 import random
-from random_forest import RandomForestOptimizer
-from model_evaluation import ModelEvaluator
+import torch
+import torch.nn as nn
+import lightning as L
+import matplotlib.pyplot as plt
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from torch.utils.data import DataLoader, TensorDataset
 
 try:
     from src.data_preprocessing import StockDataPreprocessor
+    from src.random_forest import RandomForestOptimizer
 except ModuleNotFoundError:
     from data_preprocessing import StockDataPreprocessor
+    from random_forest import RandomForestOptimizer
 
 
 if __name__ == "__main__":
@@ -60,6 +66,8 @@ if __name__ == "__main__":
 
     # Train final model with best parameters
     final_model = rf_optimizer.train_best_model(X_train, y_train)
+
+    from model_evaluation import ModelEvaluator
 
     rf_evaluator = ModelEvaluator(
         model=final_model,

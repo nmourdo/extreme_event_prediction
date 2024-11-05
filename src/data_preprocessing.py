@@ -129,12 +129,6 @@ class StockDataPreprocessor:
         X_test = features.iloc[val_size:]
         y_test = labels.iloc[val_size:]
 
-        print(
-            f"Training features shape: {X_train.shape}, labels shape: {y_train.shape}"
-        )
-        print(f"Validation features shape: {X_val.shape}, labels shape: {y_val.shape}")
-        print(f"Test features shape: {X_test.shape}, labels shape: {y_test.shape}")
-
         return X_train, y_train, X_val, y_val, X_test, y_test
 
     @staticmethod

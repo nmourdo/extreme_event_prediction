@@ -1,11 +1,12 @@
 import numpy as np
 import random
-import lightning as L
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import matplotlib.pyplot as plt
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+import lightning as L
 from torch.utils.data import DataLoader, TensorDataset
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 
 try:
     from src.data_preprocessing import StockDataPreprocessor
@@ -13,46 +14,34 @@ except ModuleNotFoundError:
     from data_preprocessing import StockDataPreprocessor
 
 
-class TCNNClassifier:
+class LSTMClassifier:
     def __init__(
         self,
         n_features: int,
         lookback: int,
         hidden_dim: int = 128,
-        learning_rate: float = 1e-4,
+        num_layers: int = 2,
         dropout_prob: float = 0.3,
-        conv_channels: int = 64,
-        kernel_size: int = 3,
-        scheduler_patience: int = 5,
-        scheduler_factor: float = 0.5,
-        min_lr: float = 1e-6,
+        learning_rate: float = 1e-4,
     ) -> None:
         """
-        Classifier class for TCNN model.
+        Classifier class for LSTM model.
 
         Args:
             n_features: Number of input features
             lookback: Number of timesteps to look back
             hidden_dim: Dimension of hidden layer
-            learning_rate: Learning rate for optimizer
+            num_layers: Number of LSTM layers
             dropout_prob: Dropout probability
-            conv_channels: Number of channels in first conv layer
-            kernel_size: Size of convolutional kernel
-            scheduler_patience: Number of epochs with no improvement after which learning rate will be reduced
-            scheduler_factor: Factor by which the learning rate will be reduced
-            min_lr: Minimum learning rate
+            learning_rate: Learning rate for optimizer
         """
-        self.model = TCNN(
+        self.model = LSTM(
             n_features=n_features,
             lookback=lookback,
             hidden_dim=hidden_dim,
-            learning_rate=learning_rate,
+            num_layers=num_layers,
             dropout_prob=dropout_prob,
-            conv_channels=conv_channels,
-            kernel_size=kernel_size,
-            scheduler_patience=scheduler_patience,
-            scheduler_factor=scheduler_factor,
-            min_lr=min_lr,
+            learning_rate=learning_rate,
         )
 
     def train(
@@ -133,84 +122,66 @@ class TCNNClassifier:
         plt.show()
 
 
-class TCNN(L.LightningModule):
+class LSTM(L.LightningModule):
     def __init__(
         self,
         n_features: int,
         lookback: int,
-        hidden_dim: int = 128,
-        conv_channels: int = 64,
-        kernel_size: int = 3,
-        dropout_prob: float = 0.3,
-        learning_rate: float = 1e-4,
-        scheduler_patience: int = 5,
-        scheduler_factor: float = 0.5,
-        min_lr: float = 1e-6,
+        hidden_dim: int = 256,
+        num_layers: int = 2,
+        dropout_prob: float = 0.2,
+        learning_rate: float = 3e-4,
     ) -> None:
-        """
-        Parameters:
-        -----------
-        n_features : int
-            Number of input features
-        lookback : int
-            Number of timesteps to look back
-        hidden_dim : int
-            Dimension of hidden dense layer
-        conv_channels : int
-            Number of channels in first conv layer (second layer has 2x channels)
-        kernel_size : int
-            Size of convolutional kernel
-        learning_rate : float
-            Learning rate for optimizer
-        scheduler_patience : int
-            Number of epochs with no improvement after which learning rate will be reduced
-        scheduler_factor : float
-            Factor by which the learning rate will be reduced
-        min_lr : float
-            Minimum learning rate
-        """
         super().__init__()
-        # Save hyperparameters
         self.save_hyperparameters()
 
         self.learning_rate = learning_rate
-        self.scheduler_patience = scheduler_patience
-        self.scheduler_factor = scheduler_factor
-        self.min_lr = min_lr
         self.train_losses = []
         self.val_losses = []
 
-        # Definition of the CNN architecture
-        self.cnn = nn.Sequential(
-            nn.Conv1d(
-                in_channels=n_features,
-                out_channels=conv_channels,
-                kernel_size=kernel_size,
-            ),
+        # Standard LSTM with increased capacity
+        self.lstm = nn.LSTM(
+            input_size=n_features,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            dropout=dropout_prob if num_layers > 1 else 0,
+            batch_first=True,
+        )
+
+        # Improved classifier with batch normalization
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=dropout_prob),
-            nn.Conv1d(
-                in_channels=conv_channels,
-                out_channels=conv_channels * 2,
-                kernel_size=kernel_size,
-            ),
+            nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
-            nn.Dropout(p=dropout_prob),
-            nn.Flatten(),
-            nn.Linear(
-                (conv_channels * 2) * (lookback - 2 * kernel_size + 2), hidden_dim
-            ),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_prob),
-            nn.Linear(hidden_dim, 1),
+            nn.Linear(hidden_dim // 2, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass of the model."""
-        x = self.cnn(x)
-        return torch.sigmoid(x)  # Add sigmoid activation here
+        # LSTM expects input of shape (batch_size, seq_len, features)
+        lstm_out, _ = self.lstm(x)
+
+        # Use only the last output for prediction
+        last_output = lstm_out[:, -1, :]
+
+        # Pass through classifier layers and add sigmoid activation
+        return torch.sigmoid(self.classifier(last_output))
 
     def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """
+        Performs a single training step.
+
+        Args:
+            batch: Tuple of (features, labels)
+            batch_idx: Index of current batch
+
+        Returns:
+            Training loss value
+        """
         x, y = batch
         y_hat = self(x)
 
@@ -226,74 +197,95 @@ class TCNN(L.LightningModule):
             y.view(-1, 1) == 1, torch.tensor(pos_weight), torch.tensor(neg_weight)
         )
 
+        # Use weighted BCE loss
         criterion = nn.BCELoss(weight=weights.to(self.device))
         loss = criterion(y_hat, y.float().view(-1, 1))
 
+        # Store training loss
         self.train_losses.append(loss.item())
         self.log("train_loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """
+        Performs a single validation step.
+
+        Args:
+            batch: Tuple of (features, labels)
+            batch_idx: Index of current batch
+
+        Returns:
+            Validation loss value
+        """
         x, y = batch
         y_hat = self(x)
-        loss = nn.BCELoss()(y_hat, y.float().view(-1, 1))
+        loss = nn.BCEWithLogitsLoss()(y_hat, y.float().view(-1, 1))
+        # Store validation loss
         self.val_losses.append(loss.item())
         self.log("val_loss", loss, prog_bar=True)
         return loss
 
-    def configure_optimizers(self) -> dict:
+    def configure_optimizers(self) -> torch.optim.Optimizer:
         """
-        Configures the optimizer and learning rate scheduler.
+        Configures the optimizer.
 
         Returns:
-            dict: Configuration dictionary for optimizer and scheduler
+            Optimizer instance
         """
         # Add weight decay for regularization
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.learning_rate,
-            weight_decay=0.01,
+            weight_decay=0.01,  # L2 regularization
         )
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode="min",
-            factor=self.scheduler_factor,
-            patience=self.scheduler_patience,
-            min_lr=self.min_lr,
-            verbose=True,
-        )
-
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss",
-                "frequency": 1,
-            },
-        }
+        return optimizer
 
 
 if __name__ == "__main__":
     # Set random seeds for reproducibility
     np.random.seed(42)
     random.seed(42)
-    torch.manual_seed(42)
 
-    # Initialize data preprocessor and load data
+    # Insantiate the preprocessor and download the data
     preprocessor = StockDataPreprocessor(
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"
     )
     stock_prices = preprocessor.download_and_prepare_stock_data()
-    # Standardize the features except for the daily returns,
-    # which is already in a similar scale
+    # Add 10-day rolling volatility, volume relative to 10-day moving average and VIX index
+    stock_prices = preprocessor.add_features()
+
+    # Standardize the features except for the daily returns
     stock_prices = preprocessor.standardize_data(
-        stock_prices, ["Open", "High", "Low", "Close", "Volume"]
+        stock_prices,
+        [
+            "Open",
+            "High",
+            "Low",
+            "Close",
+            "Volume",
+            "rolling_volatility",
+            "relative_volume",
+            "VIX",
+            "bollinger_band_width",
+        ],
     )
 
     # Split data into train, validation and test sets
-    X_train, y_train, X_val, y_val, X_test, y_test = preprocessor.split_data(
+    X_train, y_train, X_val, y_val, X_test, y_test = StockDataPreprocessor.split_data(
         stock_prices,
-        ["Open", "High", "Low", "Close", "Volume", "Daily_Returns"],
+        [
+            "Open",
+            "High",
+            "Low",
+            "Close",
+            "Volume",
+            "rolling_volatility",
+            "relative_volume",
+            "VIX",
+            "bollinger_band_width",
+            "ATR",
+            "Daily_Returns",
+        ],
         "Extreme_Event",
         train_ratio=0.7,
         val_ratio=0.85,
@@ -304,22 +296,37 @@ if __name__ == "__main__":
     X_val, y_val = preprocessor.create_sequences(X_val, y_val, lookback=10)
     X_test, y_test = preprocessor.create_sequences(X_test, y_test, lookback=10)
 
+    # Transpose the data to match the expected input shape for LSTM
+    X_train = np.transpose(X_train, (0, 2, 1))
+    X_val = np.transpose(X_val, (0, 2, 1))
+    X_test = np.transpose(X_test, (0, 2, 1))
+
     # Train the model
-    tcnn_classifier = TCNNClassifier(
-        n_features=X_train.shape[1],
-        lookback=X_train.shape[2],
-        hidden_dim=64,
-        conv_channels=96,
-        kernel_size=3,
-        dropout_prob=0.3,
-        learning_rate=1e-4,
-        scheduler_patience=5,
-        scheduler_factor=0.5,
-        min_lr=1e-6,
+    lstm_classifier = LSTMClassifier(
+        n_features=X_train.shape[2],
+        lookback=X_train.shape[1],
+        hidden_dim=128,
+        num_layers=3,
+        dropout_prob=0.5,
+        learning_rate=1e-3,
     )
-    checkpoint_callback = tcnn_classifier.train(
+    checkpoint_callback = lstm_classifier.train(
         X_train, y_train, X_val, y_val, batch_size=32, max_epochs=100, patience=20
     )
 
     # Plot training history
-    tcnn_classifier.plot_training_history()
+    lstm_classifier.plot_training_history()
+
+    # Evaluate the model
+    from model_evaluation import ModelEvaluator
+
+    lstm_evaluator = ModelEvaluator(
+        model=lstm_classifier.model,
+        model_type="LSTM",
+    )
+    metrics = lstm_evaluator.evaluate(X_test, y_test)
+    for metric, value in metrics.items():
+        print(f"{metric:20s}: {value:.4f}")
+    print("-" * 40)
+
+    lstm_evaluator.plot_confusion_matrix(X_test, y_test)

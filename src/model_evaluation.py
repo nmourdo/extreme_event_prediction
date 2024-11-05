@@ -20,15 +20,17 @@ from sklearn.metrics import (
 try:
     from src.data_preprocessing import StockDataPreprocessor
     from src.temporal_cnn import TCNN
+    from src.improvement_lstm import LSTM
 except ModuleNotFoundError:
     from data_preprocessing import StockDataPreprocessor
     from temporal_cnn import TCNN
+    from improvement_lstm import LSTM
 
 
 class ModelEvaluator:
     def __init__(
         self,
-        model: Union[RandomForestClassifier, TCNN],
+        model: Union[RandomForestClassifier, TCNN, LSTM],
         model_type: str,
         batch_size: int = 32,
     ):
@@ -36,17 +38,17 @@ class ModelEvaluator:
 
         Parameters
         ----------
-        model : Union[RandomForestClassifier, TCNN]
-            The model to evaluate. Can be either a Random Forest classifier or a Temporal CNN model.
+        model : Union[RandomForestClassifier, TCNN, LSTM]
+            The model to evaluate. Can be either a Random Forest classifier, a Temporal CNN model or an LSTM model.
         model_type : str
-            The type of model being evaluated. Must be either 'RF' for Random Forest or 'TCNN' for Temporal CNN.
+            The type of model being evaluated. Must be either 'RF' for Random Forest, 'TCNN' for Temporal CNN or 'LSTM' for LSTM.
         batch_size : int, optional
             Batch size for PyTorch model evaluation, by default 32. Only used when model_type is 'TCNN'.
         """
         self.model = model
         self.model_type = model_type
         self.batch_size = batch_size
-        if model_type == "TCNN":
+        if model_type == "TCNN" or model_type == "LSTM":
             self.device = model.device
 
     def predict(self, X: np.ndarray) -> np.ndarray:
