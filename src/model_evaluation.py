@@ -20,11 +20,11 @@ from sklearn.metrics import (
 try:
     from src.data_preprocessing import StockDataPreprocessor
     from src.temporal_cnn import TCNN
-    from src.improvement_lstm import LSTM
+    from src.improvement import LSTM
 except ModuleNotFoundError:
     from data_preprocessing import StockDataPreprocessor
     from temporal_cnn import TCNN
-    from improvement_lstm import LSTM
+    from improvement import LSTM
 
 
 class ModelEvaluator:
@@ -48,8 +48,11 @@ class ModelEvaluator:
         self.model = model
         self.model_type = model_type
         self.batch_size = batch_size
-        if model_type == "TCNN" or model_type == "LSTM" or model_type == "FNN":
+        # Set device for all PyTorch models
+        if model_type in ["TCNN", "LSTM", "FNN"]:
             self.device = model.device
+        else:
+            self.device = "cpu"  # Default device for non-PyTorch models
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Make predictions using the model.
