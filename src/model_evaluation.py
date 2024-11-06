@@ -48,7 +48,7 @@ class ModelEvaluator:
         self.model = model
         self.model_type = model_type
         self.batch_size = batch_size
-        if model_type == "TCNN" or model_type == "LSTM":
+        if model_type == "TCNN" or model_type == "LSTM" or model_type == "FNN":
             self.device = model.device
 
     def predict(self, X: np.ndarray) -> np.ndarray:

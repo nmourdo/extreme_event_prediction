@@ -199,9 +199,12 @@ class LSTM(L.LightningModule):
             dropout=dropout_prob if num_layers > 1 else 0,
             batch_first=True,
         )
-
-        # Improved classifier with batch normalization
+        # Improved classifier with batch normalization and deeper architecture
         self.classifier = nn.Sequential(
+            nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
             nn.Dropout(dropout_prob),
             nn.Linear(hidden_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
@@ -210,7 +213,11 @@ class LSTM(L.LightningModule):
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
-            nn.Linear(hidden_dim // 2, 1),
+            nn.Dropout(dropout_prob),
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.BatchNorm1d(hidden_dim // 4),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 4, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
