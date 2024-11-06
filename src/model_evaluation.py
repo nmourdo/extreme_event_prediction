@@ -196,7 +196,8 @@ class ModelEvaluator:
         ax.set_ylabel("True Label")
         ax.set_xlabel("Predicted Label")
         plt.tight_layout()
-        plt.show()
+        if ax is None:
+            plt.show()
 
 
 def compare_models(evaluators: dict, data_dict: dict):

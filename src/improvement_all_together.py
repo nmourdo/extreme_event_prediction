@@ -1,33 +1,57 @@
-import numpy as np
 import random
+import warnings
+from typing import Any, Dict, Tuple, Type
+
+import lightning as L
+import matplotlib.pyplot as plt
+import numpy as np
+import ray
+from ray import tune
+from ray.tune.integration.pytorch_lightning import TuneReportCallback
+from ray.tune.schedulers import ASHAScheduler
+from sklearn.ensemble import RandomForestClassifier
 import torch
 import torch.nn as nn
-import lightning as L
-from sklearn.ensemble import RandomForestClassifier
 from torch.utils.data import DataLoader, TensorDataset
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from ray.tune.search.hyperopt import HyperOptSearch
+
+# Local imports
 from data_preprocessing import StockDataPreprocessor
 from model_evaluation import ModelEvaluator
 from random_forest import RandomForestOptimizer
-import matplotlib.pyplot as plt
-import ray
-from ray import tune
-from ray.tune.schedulers import ASHAScheduler
-from ray.tune.integration.pytorch_lightning import TuneReportCallback
-from typing import Type, Dict, Any, Tuple
-import warnings
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
 
-# Base class for common functionality
 class BaseModel(L.LightningModule):
+    """Base model class implementing common functionality for deep learning models.
+
+    This class provides the basic training, validation and optimization setup using PyTorch Lightning.
+    It implements weighted binary cross-entropy loss to handle class imbalance during training.
+
+    Args:
+        learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-4.
+    """
+
     def __init__(self, learning_rate: float = 1e-4) -> None:
         super().__init__()
         self.learning_rate = learning_rate
 
     def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Performs a single training step.
+
+        Implements weighted binary cross-entropy loss to handle class imbalance.
+        Weights are calculated based on class distribution in each batch.
+
+        Args:
+            batch (tuple): Tuple containing input features and target labels
+            batch_idx (int): Index of current batch
+
+        Returns:
+            torch.Tensor: Training loss for current batch
+        """
         x, y = batch
         y_hat = self(x)
 
@@ -51,6 +75,15 @@ class BaseModel(L.LightningModule):
         return loss
 
     def validation_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Performs a single validation step.
+
+        Args:
+            batch (tuple): Tuple containing input features and target labels
+            batch_idx (int): Index of current batch
+
+        Returns:
+            torch.Tensor: Validation loss for current batch
+        """
         x, y = batch
         y_hat = self(x)
         loss = nn.BCELoss()(y_hat, y.float().view(-1, 1))
@@ -58,11 +91,27 @@ class BaseModel(L.LightningModule):
         return loss
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        """Configures the optimizer for training.
+            Adam with L2 penalty is used as a countermeasure against overfitting.
+
+        Returns:
+            torch.optim.Optimizer: AdamW optimizer instance
+        """
+        return torch.optim.AdamW(
+            self.parameters(), lr=self.learning_rate, weight_decay=0.01
+        )
 
 
-# FNN model inheriting from BaseModel
 class FNN(BaseModel):
+    """Feed-forward neural network model for binary classification.
+
+    Args:
+        n_features (int): Number of input features
+        hidden_dim (int, optional): Dimension of hidden layers. Defaults to 128.
+        dropout_prob (float, optional): Dropout probability. Defaults to 0.3.
+        learning_rate (float, optional): Learning rate for optimizer. Defaults to 1e-4.
+    """
+
     def __init__(
         self,
         n_features: int,
@@ -82,11 +131,29 @@ class FNN(BaseModel):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the model.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, n_features)
+
+        Returns:
+            torch.Tensor: Model predictions of shape (batch_size, 1)
+        """
         return torch.sigmoid(self.fnn(x))
 
 
-# LSTM model inheriting from BaseModel
 class LSTM(BaseModel):
+    """Long Short-Term Memory (LSTM) model for binary classification.
+
+    Args:
+        n_features (int): Number of input features per timestep
+        lookback (int): Number of timesteps to look back
+        hidden_dim (int, optional): Dimension of LSTM hidden state. Defaults to 256.
+        num_layers (int, optional): Number of LSTM layers. Defaults to 2.
+        dropout_prob (float, optional): Dropout probability. Defaults to 0.2.
+        learning_rate (float, optional): Learning rate for optimizer. Defaults to 3e-4.
+    """
+
     def __init__(
         self,
         n_features: int,
@@ -113,6 +180,14 @@ class LSTM(BaseModel):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the model.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, lookback, n_features)
+
+        Returns:
+            torch.Tensor: Model predictions of shape (batch_size, 1)
+        """
         lstm_out, _ = self.lstm(x)
         last_output = lstm_out[:, -1, :]
         return torch.sigmoid(self.classifier(last_output))
@@ -300,15 +375,15 @@ if __name__ == "__main__":
     X_val_lstm = np.transpose(X_val_lstm, (0, 2, 1))
     X_test_lstm = np.transpose(X_test_lstm, (0, 2, 1))
 
-    # Define hyperparameter search space
-    fnn_config = {
+    # Define hyperparameter search spaces
+    fnn_space = {
         "hidden_dim": tune.choice([64, 128, 256]),
         "dropout_prob": tune.uniform(0.1, 0.5),
         "learning_rate": tune.loguniform(1e-4, 1e-2),
         "batch_size": tune.choice([16, 32, 64]),
     }
 
-    lstm_config = {
+    lstm_space = {
         "hidden_dim": tune.choice([64, 128, 256]),
         "num_layers": tune.choice([1, 2, 3]),
         "dropout_prob": tune.uniform(0.1, 0.5),
@@ -318,7 +393,10 @@ if __name__ == "__main__":
 
     # Initialize Ray
     ray.init(log_to_driver=False)
+
+    # Tune FNN model
     print("Tuning the FNN model...")
+    fnn_search = HyperOptSearch(space=fnn_space, metric="loss", mode="min")
     fnn_analysis = tune.run(
         tune.with_parameters(
             tune_model,
@@ -328,9 +406,9 @@ if __name__ == "__main__":
             X_val=X_val_fnn.values,
             y_val=y_val_fnn.values,
         ),
-        config=fnn_config,
         num_samples=20,
         scheduler=ASHAScheduler(max_t=10, grace_period=10, reduction_factor=2),
+        search_alg=fnn_search,
         metric="loss",
         mode="min",
         verbose=0,
@@ -354,7 +432,9 @@ if __name__ == "__main__":
     fnn_evaluator = ModelEvaluator(model=best_fnn_model, model_type="FNN")
     fnn_metrics = fnn_evaluator.evaluate(X_test_fnn.values, y_test_fnn.values)
 
+    # Tune LSTM model
     print("Tuning the LSTM model...")
+    lstm_search = HyperOptSearch(space=lstm_space, metric="loss", mode="min")
     lstm_analysis = tune.run(
         tune.with_parameters(
             tune_model,
@@ -364,9 +444,9 @@ if __name__ == "__main__":
             X_val=X_val_lstm,
             y_val=y_val_lstm,
         ),
-        config=lstm_config,
         num_samples=20,
         scheduler=ASHAScheduler(max_t=10, grace_period=10, reduction_factor=2),
+        search_alg=lstm_search,
         metric="loss",
         mode="min",
         verbose=0,
@@ -399,7 +479,7 @@ if __name__ == "__main__":
     rf_evaluator = ModelEvaluator(model=best_rf_model, model_type="RF")
     rf_metrics = rf_evaluator.evaluate(X_test_fnn, y_test_fnn)
 
-    # Print metrics and confusion matrices side by side
+    # Compare the models
     print("\nModel Comparison:")
     print(f"{'Metric':<20} {'FNN':<10} {'LSTM':<10} {'Random Forest':<10}")
     for metric in fnn_metrics.keys():
