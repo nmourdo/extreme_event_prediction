@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from ray.tune.search.hyperopt import HyperOptSearch
 
-# Local imports
 from data_preprocessing import StockDataPreprocessor
 from model_evaluation import ModelEvaluator
 from random_forest import RandomForestOptimizer
@@ -193,123 +192,331 @@ class LSTM(BaseModel):
         return torch.sigmoid(self.classifier(last_output))
 
 
-def train_nn(
-    model: L.LightningModule,
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
-) -> Tuple[Dict[str, float], np.ndarray]:
-    """
-    Train a NN model.
+class ModelTrainer:
+    """Handles training, tuning, and comparison of different models."""
 
-    Args:
-        model: The model to train.
-        X_train: Training features.
-        y_train: Training labels.
-        X_val: Validation features.
-        y_val: Validation labels.
+    def __init__(self):
+        """Initialize hyperparameter search spaces and other configurations."""
+        self.fnn_space = {
+            "hidden_dim": tune.choice([64, 128, 256]),
+            "dropout_prob": tune.uniform(0.1, 0.5),
+            "learning_rate": tune.loguniform(1e-4, 1e-2),
+            "batch_size": tune.choice([16, 32, 64]),
+        }
 
-    Returns:
-       None
-    """
-    trainer = L.Trainer(
-        max_epochs=1, callbacks=[EarlyStopping(monitor="val_loss", patience=10)]
-    )
-    train_dataset = TensorDataset(
-        torch.FloatTensor(X_train), torch.FloatTensor(y_train)
-    )
-    val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=False)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
+        self.lstm_space = {
+            "hidden_dim": tune.choice([64, 128, 256]),
+            "num_layers": tune.choice([1, 2, 3]),
+            "dropout_prob": tune.uniform(0.1, 0.5),
+            "learning_rate": tune.loguniform(1e-4, 1e-2),
+            "batch_size": tune.choice([16, 32, 64]),
+        }
 
+    def train_nn(
+        self,
+        model: L.LightningModule,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        batch_size: int = 32,
+    ) -> None:
+        """Train a neural network model with early stopping.
 
-def train_random_forest(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
-) -> RandomForestClassifier:
-    """
-    Train and evaluate a Random Forest model.
+        Args:
+            model: PyTorch Lightning model to train
+            X_train: Training features
+            y_train: Training labels
+            X_val: Validation features
+            y_val: Validation labels
+            batch_size: Batch size for training
+        """
+        trainer = L.Trainer(
+            max_epochs=100,
+            callbacks=[EarlyStopping(monitor="val_loss", patience=10)],
+            enable_progress_bar=True,
+        )
 
-    Args:
-        X_train: Training features.
-        y_train: Training labels.
-        X_val: Validation features.
-        y_val: Validation labels.
-        X_test: Test features.
-        y_test: Test labels.
+        # Prepare datasets and dataloaders
+        train_dataset = TensorDataset(
+            torch.FloatTensor(X_train), torch.FloatTensor(y_train)
+        )
+        val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
 
-    Returns:
-        A tuple containing the evaluation metrics and the confusion matrix.
-    """
-    rf_optimizer = RandomForestOptimizer()
-    rf_optimizer.optimize(X_train, y_train, X_val, y_val)
-    final_model = rf_optimizer.train_best_model(X_train, y_train)
-    # evaluator = ModelEvaluator(model=final_model, model_type="RF")
-    # metrics = evaluator.evaluate(X_test, y_test)
-    # confusion_matrix = evaluator.plot_confusion_matrix(X_test, y_test)
-    return final_model
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
+        trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
-def tune_model(
-    config: Dict[str, Any],
-    model_class: Type[BaseModel],
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
-) -> None:
-    """
-    Tune a model using Ray Tune.
+    def train_random_forest(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+    ) -> RandomForestClassifier:
+        """Train and optimize a Random Forest model.
 
-    Args:
-        config: The hyperparameter configuration.
-        model_class: The class of the model to tune.
-        X_train: Training features.
-        y_train: Training labels.
-        X_val: Validation features.
-        y_val: Validation labels.
-    """
-    # Determine the model parameters based on the model class
-    model_params = {
-        "n_features": X_train.shape[1] if model_class == FNN else X_train.shape[2],
-        "hidden_dim": config["hidden_dim"],
-        "dropout_prob": config["dropout_prob"],
-        "learning_rate": config["learning_rate"],
-    }
+        Args:
+            X_train: Training features
+            y_train: Training labels
+            X_val: Validation features
+            y_val: Validation labels
 
-    # Add lookback and num_layers only for LSTM
-    if model_class == LSTM:
-        model_params["lookback"] = X_train.shape[1]
-        model_params["num_layers"] = config.get("num_layers", 1)
+        Returns:
+            Trained Random Forest model with optimal hyperparameters
+        """
+        rf_optimizer = RandomForestOptimizer()
+        rf_optimizer.optimize(X_train, y_train, X_val, y_val)
+        return rf_optimizer.train_best_model(X_train, y_train)
 
-    # Instantiate the model
-    model = model_class(**model_params)
+    def tune_model(
+        self,
+        config: dict,
+        model_class: type,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+    ) -> None:
+        """Tune model hyperparameters using Ray Tune.
 
-    trainer = L.Trainer(
-        max_epochs=1,
-        callbacks=[TuneReportCallback({"loss": "val_loss"}, on="validation_end")],
-        enable_progress_bar=False,
-    )
-    train_dataset = TensorDataset(
-        torch.FloatTensor(X_train), torch.FloatTensor(y_train)
-    )
-    val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
-    train_loader = DataLoader(
-        train_dataset, batch_size=config["batch_size"], shuffle=False
-    )
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
-    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
+        Args:
+            config: Hyperparameter configuration to test
+            model_class: Class of the model to tune (FNN or LSTM)
+            X_train: Training features
+            y_train: Training labels
+            X_val: Validation features
+            y_val: Validation labels
+        """
+        # Determine model parameters based on model class
+        model_params = {
+            "n_features": X_train.shape[1] if model_class == FNN else X_train.shape[2],
+            "hidden_dim": config["hidden_dim"],
+            "dropout_prob": config["dropout_prob"],
+            "learning_rate": config["learning_rate"],
+        }
+
+        if model_class == LSTM:
+            model_params["lookback"] = X_train.shape[1]
+            model_params["num_layers"] = config.get("num_layers", 1)
+
+        # Initialize model and trainer
+        model = model_class(**model_params)
+        trainer = L.Trainer(
+            max_epochs=20,
+            callbacks=[TuneReportCallback({"loss": "val_loss"}, on="validation_end")],
+            enable_progress_bar=False,
+        )
+
+        # Prepare data loaders
+        train_dataset = TensorDataset(
+            torch.FloatTensor(X_train), torch.FloatTensor(y_train)
+        )
+        val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
+
+        train_loader = DataLoader(
+            train_dataset, batch_size=config["batch_size"], shuffle=True
+        )
+        val_loader = DataLoader(
+            val_dataset, batch_size=config["batch_size"], shuffle=False
+        )
+
+        trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
+
+    def train_and_evaluate_all_models(
+        self,
+        X_train_fnn,
+        y_train_fnn,
+        X_val_fnn,
+        y_val_fnn,
+        X_train_lstm,
+        y_train_lstm,
+        X_val_lstm,
+        y_val_lstm,
+        X_test_fnn,
+        y_test_fnn,
+        X_test_lstm,
+        y_test_lstm,
+    ):
+        """Train and evaluate all models (FNN, LSTM, and Random Forest).
+
+        Returns:
+            Tuple containing trained models and their evaluation metrics
+        """
+        # Initialize Ray for hyperparameter tuning
+        ray.init(log_to_driver=False)
+
+        # Tune and train FNN
+        print("\n" + "=" * 50)
+        print("Tuning FNN model...")
+        print("=" * 50)
+        fnn_search = HyperOptSearch(space=self.fnn_space, metric="loss", mode="min")
+        fnn_analysis = tune.run(
+            tune.with_parameters(
+                self.tune_model,
+                model_class=FNN,
+                X_train=X_train_fnn,
+                y_train=y_train_fnn,
+                X_val=X_val_fnn,
+                y_val=y_val_fnn,
+            ),
+            num_samples=20,
+            scheduler=ASHAScheduler(max_t=10, grace_period=5, reduction_factor=2),
+            search_alg=fnn_search,
+            metric="loss",
+            mode="min",
+            verbose=0,
+        )
+
+        best_fnn_config = fnn_analysis.get_best_config(metric="loss", mode="min")
+        print("\n" + "=" * 50)
+        print("Best FNN hyperparameters:", best_fnn_config)
+        print("=" * 50)
+
+        # Train FNN with best config
+        best_fnn_model = FNN(
+            n_features=X_train_fnn.shape[1],
+            hidden_dim=best_fnn_config["hidden_dim"],
+            dropout_prob=best_fnn_config["dropout_prob"],
+            learning_rate=best_fnn_config["learning_rate"],
+        )
+        self.train_nn(
+            best_fnn_model,
+            X_train_fnn,
+            y_train_fnn,
+            X_val_fnn,
+            y_val_fnn,
+            batch_size=best_fnn_config["batch_size"],
+        )
+
+        # Tune and train LSTM
+        print("\n" + "=" * 50)
+        print("Tuning LSTM model...")
+        print("=" * 50)
+        lstm_search = HyperOptSearch(space=self.lstm_space, metric="loss", mode="min")
+        lstm_analysis = tune.run(
+            tune.with_parameters(
+                self.tune_model,
+                model_class=LSTM,
+                X_train=X_train_lstm,
+                y_train=y_train_lstm,
+                X_val=X_val_lstm,
+                y_val=y_val_lstm,
+            ),
+            num_samples=20,
+            scheduler=ASHAScheduler(max_t=10, grace_period=5, reduction_factor=2),
+            search_alg=lstm_search,
+            metric="loss",
+            mode="min",
+            verbose=0,
+        )
+
+        best_lstm_config = lstm_analysis.get_best_config(metric="loss", mode="min")
+        print("\n" + "=" * 50)
+        print("Best LSTM hyperparameters:", best_lstm_config)
+        print("=" * 50)
+
+        # Train LSTM with best config
+        best_lstm_model = LSTM(
+            n_features=X_train_lstm.shape[2],
+            lookback=X_train_lstm.shape[1],
+            hidden_dim=best_lstm_config["hidden_dim"],
+            num_layers=best_lstm_config["num_layers"],
+            dropout_prob=best_lstm_config["dropout_prob"],
+            learning_rate=best_lstm_config["learning_rate"],
+        )
+        self.train_nn(
+            best_lstm_model,
+            X_train_lstm,
+            y_train_lstm,
+            X_val_lstm,
+            y_val_lstm,
+            batch_size=best_lstm_config["batch_size"],
+        )
+
+        # Train Random Forest
+        print("\n" + "=" * 50)
+        print("Tuning Random Forest model...")
+        print("=" * 50)
+        best_rf_model = self.train_random_forest(
+            X_train_fnn, y_train_fnn, X_val_fnn, y_val_fnn
+        )
+
+        # Evaluate all models
+        fnn_evaluator = ModelEvaluator(model=best_fnn_model, model_type="FNN")
+        lstm_evaluator = ModelEvaluator(model=best_lstm_model, model_type="LSTM")
+        rf_evaluator = ModelEvaluator(model=best_rf_model, model_type="RF")
+
+        fnn_metrics = fnn_evaluator.evaluate(X_test_fnn, y_test_fnn)
+        lstm_metrics = lstm_evaluator.evaluate(X_test_lstm, y_test_lstm)
+        rf_metrics = rf_evaluator.evaluate(X_test_fnn, y_test_fnn)
+
+        ray.shutdown()
+
+        return (
+            best_fnn_model,
+            best_lstm_model,
+            best_rf_model,
+            fnn_metrics,
+            lstm_metrics,
+            rf_metrics,
+            fnn_evaluator,
+            lstm_evaluator,
+            rf_evaluator,
+        )
+
+    def plot_model_comparison(
+        self,
+        X_test_fnn,
+        y_test_fnn,
+        X_test_lstm,
+        y_test_lstm,
+        fnn_evaluator,
+        lstm_evaluator,
+        rf_evaluator,
+        fnn_metrics,
+        lstm_metrics,
+        rf_metrics,
+    ):
+        """Create comparison plots and metrics summary for all models.
+
+        Args:
+            Various test data and model evaluators
+        """
+        # Print metrics comparison
+        print("\n" + "=" * 55)
+        print("Model Comparison:")
+        print("=" * 55)
+        print(f"{'Metric':<20} {'FNN':<10} {'LSTM':<10} {'Random Forest':<10}")
+        print("-" * 55)
+        for metric in fnn_metrics.keys():
+            print(
+                f"{metric:<20} {fnn_metrics[metric]:<10.4f} "
+                f"{lstm_metrics[metric]:<10.4f} {rf_metrics[metric]:<10.4f}"
+            )
+        print("-" * 55 + "\n")
+
+        # Plot confusion matrices
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 4))
+
+        fnn_evaluator.plot_confusion_matrix(
+            X_test_fnn.values, y_test_fnn.values, ax=ax1
+        )
+        lstm_evaluator.plot_confusion_matrix(X_test_lstm, y_test_lstm, ax=ax2)
+        rf_evaluator.plot_confusion_matrix(X_test_fnn, y_test_fnn, ax=ax3)
+
+        plt.tight_layout()
+        plt.show()
 
 
 if __name__ == "__main__":
+    # Set seed for reproducibility
     np.random.seed(42)
     random.seed(42)
     torch.manual_seed(42)
 
+    # Load data, add the extra features and standardize
     preprocessor = StockDataPreprocessor(
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"
     )
@@ -330,6 +537,7 @@ if __name__ == "__main__":
         ],
     )
 
+    # Split the data into training, validation and test sets
     X_train, y_train, X_val, y_val, X_test, y_test = StockDataPreprocessor.split_data(
         stock_prices,
         [
@@ -375,127 +583,42 @@ if __name__ == "__main__":
     X_val_lstm = np.transpose(X_val_lstm, (0, 2, 1))
     X_test_lstm = np.transpose(X_test_lstm, (0, 2, 1))
 
-    # Define hyperparameter search spaces
-    fnn_space = {
-        "hidden_dim": tune.choice([64, 128, 256]),
-        "dropout_prob": tune.uniform(0.1, 0.5),
-        "learning_rate": tune.loguniform(1e-4, 1e-2),
-        "batch_size": tune.choice([16, 32, 64]),
-    }
-
-    lstm_space = {
-        "hidden_dim": tune.choice([64, 128, 256]),
-        "num_layers": tune.choice([1, 2, 3]),
-        "dropout_prob": tune.uniform(0.1, 0.5),
-        "learning_rate": tune.loguniform(1e-4, 1e-2),
-        "batch_size": tune.choice([16, 32, 64]),
-    }
-
-    # Initialize Ray
-    ray.init(log_to_driver=False)
-
-    # Tune FNN model
-    print("Tuning the FNN model...")
-    fnn_search = HyperOptSearch(space=fnn_space, metric="loss", mode="min")
-    fnn_analysis = tune.run(
-        tune.with_parameters(
-            tune_model,
-            model_class=FNN,
-            X_train=X_train_fnn.values,
-            y_train=y_train_fnn.values,
-            X_val=X_val_fnn.values,
-            y_val=y_val_fnn.values,
-        ),
-        num_samples=20,
-        scheduler=ASHAScheduler(max_t=10, grace_period=10, reduction_factor=2),
-        search_alg=fnn_search,
-        metric="loss",
-        mode="min",
-        verbose=0,
-    )
-    best_fnn_config = fnn_analysis.get_best_config(metric="loss", mode="min")
-    print("Best FNN hyperparameters:", best_fnn_config)
-    print("Training the FNN model...")
-    best_fnn_model = FNN(
-        n_features=X_train_fnn.shape[1],
-        hidden_dim=best_fnn_config["hidden_dim"],
-        dropout_prob=best_fnn_config["dropout_prob"],
-        learning_rate=best_fnn_config["learning_rate"],
-    )
-    train_nn(
+    trainer = ModelTrainer()
+    (
         best_fnn_model,
+        best_lstm_model,
+        best_rf_model,
+        fnn_metrics,
+        lstm_metrics,
+        rf_metrics,
+        fnn_evaluator,
+        lstm_evaluator,
+        rf_evaluator,
+    ) = trainer.train_and_evaluate_all_models(
         X_train_fnn.values,
         y_train_fnn.values,
         X_val_fnn.values,
         y_val_fnn.values,
-    )
-    fnn_evaluator = ModelEvaluator(model=best_fnn_model, model_type="FNN")
-    fnn_metrics = fnn_evaluator.evaluate(X_test_fnn.values, y_test_fnn.values)
-
-    # Tune LSTM model
-    print("Tuning the LSTM model...")
-    lstm_search = HyperOptSearch(space=lstm_space, metric="loss", mode="min")
-    lstm_analysis = tune.run(
-        tune.with_parameters(
-            tune_model,
-            model_class=LSTM,
-            X_train=X_train_lstm,
-            y_train=y_train_lstm,
-            X_val=X_val_lstm,
-            y_val=y_val_lstm,
-        ),
-        num_samples=20,
-        scheduler=ASHAScheduler(max_t=10, grace_period=10, reduction_factor=2),
-        search_alg=lstm_search,
-        metric="loss",
-        mode="min",
-        verbose=0,
-    )
-    # Get the best hyperparameters
-    best_lstm_config = lstm_analysis.get_best_config(metric="loss", mode="min")
-    print("Best LSTM hyperparameters:", best_lstm_config)
-    print("Training the LSTM model...")
-    best_lstm_model = LSTM(
-        n_features=X_train_lstm.shape[2],
-        lookback=X_train_lstm.shape[1],
-        hidden_dim=best_lstm_config["hidden_dim"],
-        num_layers=best_lstm_config["num_layers"],
-        dropout_prob=best_lstm_config["dropout_prob"],
-        learning_rate=best_lstm_config["learning_rate"],
-    )
-    train_nn(
-        best_lstm_model,
         X_train_lstm,
         y_train_lstm,
         X_val_lstm,
         y_val_lstm,
+        X_test_fnn.values,
+        y_test_fnn.values,
+        X_test_lstm,
+        y_test_lstm,
     )
-    lstm_evaluator = ModelEvaluator(model=best_lstm_model, model_type="LSTM")
-    lstm_metrics = lstm_evaluator.evaluate(X_test_lstm, y_test_lstm)
 
-    # Train and evaluate Random Forest
-    print("Training the Random Forest model...")
-    best_rf_model = train_random_forest(X_train_fnn, y_train_fnn, X_val_fnn, y_val_fnn)
-    rf_evaluator = ModelEvaluator(model=best_rf_model, model_type="RF")
-    rf_metrics = rf_evaluator.evaluate(X_test_fnn, y_test_fnn)
-
-    # Compare the models
-    print("\nModel Comparison:")
-    print(f"{'Metric':<20} {'FNN':<10} {'LSTM':<10} {'Random Forest':<10}")
-    for metric in fnn_metrics.keys():
-        print(
-            f"{metric:<20} {fnn_metrics[metric]:<10.4f} {lstm_metrics[metric]:<10.4f} {rf_metrics[metric]:<10.4f}"
-        )
-
-    # Create a figure with 3 subplots side by side
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 4))
-
-    # Plot confusion matrices
-    fnn_evaluator.plot_confusion_matrix(X_test_fnn.values, y_test_fnn.values, ax=ax1)
-
-    lstm_evaluator.plot_confusion_matrix(X_test_lstm, y_test_lstm, ax=ax2)
-
-    rf_evaluator.plot_confusion_matrix(X_test_fnn, y_test_fnn, ax=ax3)
-
-    plt.tight_layout()
-    plt.show()
+    # Compare and plot results
+    trainer.plot_model_comparison(
+        X_test_fnn,
+        y_test_fnn,
+        X_test_lstm,
+        y_test_lstm,
+        fnn_evaluator,
+        lstm_evaluator,
+        rf_evaluator,
+        fnn_metrics,
+        lstm_metrics,
+        rf_metrics,
+    )

@@ -48,10 +48,10 @@ class RandomForestOptimizer:
         return {"loss": -f2, "status": STATUS_OK}
 
     def optimize(self, X_train, y_train, X_val, y_val, max_evals=30):
-        self.X_train = X_train.values
-        self.y_train = y_train.values.astype(int)
-        self.X_val = X_val.values
-        self.y_val = y_val.values.astype(int)
+        self.X_train = X_train
+        self.y_train = y_train.astype(int)
+        self.X_val = X_val
+        self.y_val = y_val.astype(int)
 
         self.trials = Trials()
         self.best_params = fmin(
@@ -135,10 +135,10 @@ if __name__ == "__main__":
 
     # Initialize and run optimization
     rf_optimizer = RandomForestOptimizer()
-    rf_optimizer.optimize(X_train, y_train, X_val, y_val)
+    rf_optimizer.optimize(X_train.values, y_train.values, X_val.values, y_val.values)
 
     # Train final model with best parameters
-    final_model = rf_optimizer.train_best_model(X_train, y_train)
+    final_model = rf_optimizer.train_best_model(X_train.values, y_train.values)
 
     # Save the model
     rf_optimizer.save_model("models/best_random_forest.pkl")
