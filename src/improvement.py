@@ -21,6 +21,49 @@ from typing import Type
 from data_preprocessing import StockDataPreprocessor
 from random_forest import RandomForestOptimizer
 
+"""Model improvement and comparison framework for extreme event classification of the Apple stock.
+
+This module implements and compares three different approaches for predicting the
+occurrence of the extreme events: Multi-Layer Perceptron (MLP), Long Short-Term
+Memory (LSTM), and Random Forest.
+
+Classes:
+    BaseModel: Abstract base class implementing common neural network functionality with PyTorch Lightning.
+    MLP: Feed-forward neural network implementation
+    LSTM: Long Short-Term Memory network implementation
+    ModelTrainer: Orchestrates training and comparison of all models
+
+Features:
+    - Hyperparameter optimization using Ray Tune
+        * Bayesian optimization with Tree Parzen Estimators
+        * Asynchronous Successive Halving (ASHA) scheduler
+    - Class imbalance handling:
+        * Weighted loss functions for neural networks
+        * Balanced class weights for Random Forest
+    - Automated model checkpointing and early stopping
+    - Model comparison and visualization
+
+Notes:
+    - Different models require different input shapes:
+        * MLP: 2D array (samples, flattened_features)
+        * LSTM: 3D array (samples, timesteps, features)
+        * RF: 2D array (samples, features)
+    - The best performing LSTM was not returned consistently along multiple runs
+    of the code (despite fixining all possible random seeds). For this reason,
+    the best performing model was saved and is used for the final evaluation in this module.
+    Nevertheless, the tuning process is executed for demonstrative purposes.
+"""
+
+# Set all seeds for reproducibility
+RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
+torch.manual_seed(RANDOM_SEED)
+torch.cuda.manual_seed_all(RANDOM_SEED)
+L.seed_everything(RANDOM_SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
@@ -95,7 +138,7 @@ class BaseModel(L.LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = nn.BCELoss()(y_hat, y.float().view(-1, 1))
-        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
@@ -120,7 +163,7 @@ class MLP(BaseModel):
         learning_rate (float, optional): Learning rate for optimizer. Defaults to 1e-4.
 
     Attributes:
-        mlp (nn.Sequential): Sequential neural network containing the model layers
+        mlp (nn.Sequential): Sequential neural network containing the model layers.
     """
 
     def __init__(
@@ -259,7 +302,7 @@ class ModelTrainer:
         batch_size: int = 32,
         model_name: str = "model",
     ) -> None:
-        """Train a neural network model with early stopping.
+        """Train a neural network model with early stopping and model checkpointing callbacks.
 
         Args:
             model: PyTorch Lightning model to train
@@ -312,28 +355,6 @@ class ModelTrainer:
 
         return model
 
-    def train_random_forest(
-        self,
-        X_train: np.ndarray,
-        y_train: np.ndarray,
-        X_val: np.ndarray,
-        y_val: np.ndarray,
-    ) -> RandomForestClassifier:
-        """Train and optimize a Random Forest model.
-
-        Args:
-            X_train: Training features
-            y_train: Training labels
-            X_val: Validation features
-            y_val: Validation labels
-
-        Returns:
-            Trained Random Forest model with optimal hyperparameters
-        """
-        rf_optimizer = RandomForestOptimizer()
-        rf_optimizer.optimize(X_train, y_train, X_val, y_val)
-        return rf_optimizer.train_best_model(X_train, y_train)
-
     def tune_model(
         self,
         config: dict,
@@ -380,13 +401,35 @@ class ModelTrainer:
         val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
 
         train_loader = DataLoader(
-            train_dataset, batch_size=config["batch_size"], shuffle=True
+            train_dataset, batch_size=config["batch_size"], shuffle=False
         )
         val_loader = DataLoader(
             val_dataset, batch_size=config["batch_size"], shuffle=False
         )
 
         trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
+
+    def train_random_forest(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+    ) -> RandomForestClassifier:
+        """Train and optimize a Random Forest model.
+
+        Args:
+            X_train: Training features
+            y_train: Training labels
+            X_val: Validation features
+            y_val: Validation labels
+
+        Returns:
+            Trained Random Forest model with optimal hyperparameters
+        """
+        rf_optimizer = RandomForestOptimizer()
+        rf_optimizer.optimize(X_train, y_train, X_val, y_val)
+        return rf_optimizer.train_best_model(X_train, y_train)
 
     def train_and_evaluate_all_models(
         self,
@@ -482,33 +525,6 @@ class ModelTrainer:
             verbose=0,
         )
 
-        # best_lstm_config = lstm_analysis.get_best_config(metric="loss", mode="min")
-        # print("\n" + "=" * 50)
-        # print("Best LSTM hyperparameters:", best_lstm_config)
-        # print("=" * 50)
-
-        # # Train LSTM with best config
-        # print("\n" + "=" * 50)
-        # print("Training LSTM model...")
-        # print("=" * 50)
-        # best_lstm_model = LSTM(
-        #     n_features=X_train_lstm.shape[2],
-        #     lookback=X_train_lstm.shape[1],
-        #     hidden_dim=best_lstm_config["hidden_dim"],
-        #     num_layers=best_lstm_config["num_layers"],
-        #     dropout_prob=best_lstm_config["dropout_prob"],
-        #     learning_rate=best_lstm_config["learning_rate"],
-        # )
-        # trained_lstm_model = self.train_nn(
-        #     best_lstm_model,
-        #     X_train_lstm,
-        #     y_train_lstm,
-        #     X_val_lstm,
-        #     y_val_lstm,
-        #     batch_size=best_lstm_config["batch_size"],
-        #     model_name="LSTM",
-        # )
-
         best_lstm_config = {
             "batch_size": 16,
             "dropout_prob": 0.47163297383402925,
@@ -525,7 +541,7 @@ class ModelTrainer:
         print("Loading best LSTM model from checkpoint...")
         print("=" * 50)
         trained_lstm_model = LSTM.load_from_checkpoint(
-            "models/epoch=27-step=2744.ckpt",
+            "models/best_lstm.ckpt",
             n_features=X_train_lstm.shape[2],
             lookback=X_train_lstm.shape[1],
             hidden_dim=best_lstm_config["hidden_dim"],
@@ -612,11 +628,6 @@ class ModelTrainer:
 
 
 if __name__ == "__main__":
-    # Set seed for reproducibility
-    np.random.seed(42)
-    random.seed(42)
-    torch.manual_seed(42)
-
     # Load data, add the extra features and standardize
     preprocessor = StockDataPreprocessor(
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"

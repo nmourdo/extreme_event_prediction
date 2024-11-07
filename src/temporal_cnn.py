@@ -139,7 +139,6 @@ class TCNNClassifier:
         Notes:
             - The model is automatically saved to 'checkpoints' directory
             - Training logs are saved to 'logs' directory
-            - Uses automatic hardware acceleration (CPU/GPU/TPU)
         """
         # Numpy arrays to torch tensors
         train_dataset = TensorDataset(
@@ -161,7 +160,7 @@ class TCNNClassifier:
             save_top_k=1,
             monitor="val_loss",
             mode="min",
-            save_last=True,
+            save_last=False,
         )
 
         logger = L.pytorch.loggers.CSVLogger(
