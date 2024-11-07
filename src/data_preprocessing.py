@@ -6,6 +6,27 @@ from sklearn.preprocessing import StandardScaler
 
 
 class StockDataPreprocessor:
+    """
+    A class for preprocessing stock market data for machine learning applications.
+
+    This class handles downloading, cleaning, and transforming stock data, with functionality
+    for feature engineering and preparing data for time series analysis.
+
+    Methods:
+        download_and_prepare_stock_data(): Downloads and prepares initial stock data with extreme event labels
+        standardize_data(): Standardizes features using StandardScaler from sklearn
+        split_data(): Splits data into training, validation, and test sets
+        time_series_to_supervised(): Transforms data into supervised learning format with lookback periods
+        create_sequences(): Creates sequences for time series models
+        add_features(): Adds technical indicators and market features
+
+    Attributes:
+        ticker (str): Stock ticker symbol
+        start_date (str): Start date for data collection (YYYY-MM-DD format)
+        end_date (str): End date for data collection (YYYY-MM-DD format)
+        data (pd.DataFrame): Stored stock data after processing
+    """
+
     def __init__(self, ticker: str, start_date: str, end_date: str) -> None:
         """
         Initialize the StockDataPreprocessor.
@@ -18,11 +39,10 @@ class StockDataPreprocessor:
         self.ticker = ticker
         self.start_date = start_date
         self.end_date = end_date
+        self.data = None
 
     def download_and_prepare_stock_data(self) -> pd.DataFrame:
         """
-        Downloads historical stock data and prepares it for extreme event prediction.
-
         Downloads stock data from Yahoo Finance for the specified ticker and date range,
         calculates daily returns, and creates a binary label for extreme price movements
         (defined as daily returns exceeding 2% in absolute value).
@@ -78,28 +98,30 @@ class StockDataPreprocessor:
         pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, pd.DataFrame, pd.Series
     ]:
         """
-        Splits the data into training, validation and testing sets.
+        Splits the data into training, validation and testing sets. As this is time series data,
+        the splits are made chronologically without shuffling: the first portion of the data is used
+        for training, the middle portion for validation, and the final portion for testing.
 
         Args:
             data (pd.DataFrame): Input DataFrame containing features and labels
             feature_columns (list[str]): List of column names to use as features
-            label_columns (list[str]): List of column names to use as labels
+            label (str): Column name to use as label
             train_ratio (float): Proportion of data to use for training (default: 0.7)
-            val_ratio (float): Proportion of data to use for validation (default: 0.15)
-                             Note: test_ratio will be 1 - train_ratio - val_ratio
+            val_ratio (float): Total proportion for training + validation (default: 0.85).
+                              The validation set will use (val_ratio - train_ratio) of the data,
+                              and the remaining (1 - val_ratio) will be used for testing.
 
         Returns:
             Tuple containing:
-                X_train (pd.DataFrame): Training features
+                X_train (pd.DataFrame): Training features (earliest time period)
                 y_train (pd.Series): Training labels
-                X_val (pd.DataFrame): Validation features
+                X_val (pd.DataFrame): Validation features (middle time period)
                 y_val (pd.Series): Validation labels
-                X_test (pd.DataFrame): Test features
+                X_test (pd.DataFrame): Test features (most recent time period)
                 y_test (pd.Series): Test labels
 
         Raises:
             ValueError: If column names are not found in the DataFrame
-            ValueError: If train_ratio + val_ratio >= 1
         """
         # Validate inputs
         missing_features = [col for col in feature_columns if col not in data.columns]
@@ -138,6 +160,8 @@ class StockDataPreprocessor:
         """
         Prepare time series data for classification by creating sequences of historical features
         and their corresponding future labels.
+
+        The shape of the output dataframe will be (n_samples - lookback, n_features * lookback).
 
         Parameters:
         -----------
@@ -193,7 +217,8 @@ class StockDataPreprocessor:
         X: pd.DataFrame, y: pd.Series, lookback: int = 10
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Create sequences of lookback days for each feature, with corresponding labels.
+        Create sequences of lookback days for each feature, with corresponding labels. This method transforms the data
+        into a proper format for sequential deep learning models.The output shape will be (n_samples - lookback, n_features, lookback).
 
         Parameters:
         -----------
@@ -231,28 +256,39 @@ class StockDataPreprocessor:
 
     def add_features(self) -> pd.DataFrame:
         """
-        Add new features to the existing DataFrame
+        Add new features to the existing DataFrame, dropping NaN values after each feature
+        calculation to ensure data quality and traceability.
+
+        Features added:
+            - rolling_volatility: 10-day rolling standard deviation of returns
+            - relative_volume: Current volume relative to 10-day moving average
+            - VIX: Market volatility index
+            - bollinger_band_width: Width of Bollinger Bands (2 standard deviations)
+            - ATR: 10-day Average True Range
 
         Returns:
-            pd.DataFrame: DataFrame with added features: rolling_volatility, relative_volume, VIX,
-            bollinger_band_width, and ATR
+            pd.DataFrame: DataFrame with added technical indicators and market features
         """
         # 1. 10-day Rolling Volatility
         returns = self.data["Close"].pct_change()
         self.data["rolling_volatility"] = returns.rolling(window=10).std()
+        self.data = self.data.dropna()
 
         # 2. Volume Relative to 10-day MA
         volume_ma = self.data["Volume"].rolling(window=10).mean()
         self.data["relative_volume"] = self.data["Volume"] / volume_ma
+        self.data = self.data.dropna()
 
         # 3. Download VIX and add directly
         vix = yf.download("^VIX", start=self.start_date, end=self.end_date)["Close"]
         self.data["VIX"] = vix
+        self.data = self.data.dropna()
 
         # 4. Bollinger Band Width
         sma = self.data["Close"].rolling(window=10).mean()
         std = self.data["Close"].rolling(window=10).std()
         self.data["bollinger_band_width"] = (2 * std) / sma  # Normalized by price level
+        self.data = self.data.dropna()
 
         # 5. Average True Range (ATR)
         high_low = self.data["High"] - self.data["Low"]
@@ -261,8 +297,6 @@ class StockDataPreprocessor:
         ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = ranges.max(axis=1)
         self.data["ATR"] = true_range.rolling(window=10).mean()
-
-        # Drop rows with NaN values from the rolling calculations
         self.data = self.data.dropna()
 
         return self.data

@@ -49,8 +49,8 @@ class ModelEvaluator:
         self.model_type = model_type
         self.batch_size = batch_size
         # Set device for all PyTorch models
-        if model_type in ["TCNN", "LSTM", "FNN"]:
-            self.device = model.device
+        if model_type in ["TCNN", "LSTM", "MLP"]:
+            self.device = next(model.parameters()).device
         else:
             self.device = "cpu"  # Default device for non-PyTorch models
 
@@ -121,7 +121,10 @@ class ModelEvaluator:
             y_pred = self.predict(X)
         else:
             # Create dataset and dataloader for batched predictions
-            test_dataset = TensorDataset(torch.FloatTensor(X), torch.FloatTensor(y))
+            test_dataset = TensorDataset(
+                torch.FloatTensor(X).to(self.device),
+                torch.FloatTensor(y).to(self.device),
+            )
             test_loader = DataLoader(
                 test_dataset, batch_size=self.batch_size, shuffle=False
             )
@@ -136,10 +139,9 @@ class ModelEvaluator:
             # Iterate through batches
             with torch.no_grad():
                 for X_batch, y_batch in test_loader:
-                    X_batch = X_batch.to(self.device)
                     y_pred_batch = self.model(X_batch)
                     y_pred_list.append(y_pred_batch.cpu().numpy())
-                    y_true_list.append(y_batch.numpy())
+                    y_true_list.append(y_batch.cpu().numpy())
 
             # Concatenate all batches
             y_pred = np.concatenate(y_pred_list).squeeze()

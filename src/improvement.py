@@ -1,5 +1,7 @@
 import random
 import warnings
+from datetime import datetime
+import os
 
 import lightning as L
 import matplotlib.pyplot as plt
@@ -34,11 +36,16 @@ class BaseModel(L.LightningModule):
 
     Attributes:
         learning_rate (float): Learning rate used by the optimizer
+        save_hyperparameters: Saves hyperparameters to allow model checkpointing and resuming training
     """
 
     def __init__(self, learning_rate: float = 1e-4) -> None:
         super().__init__()
+
         self.learning_rate = learning_rate
+
+        # Save hyperparameters
+        self.save_hyperparameters()
 
     def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
         """Performs a single training step.
@@ -204,6 +211,13 @@ class LSTM(BaseModel):
 class ModelTrainer:
     """Handles training, tuning, and comparison of different models.
 
+    Important note: While a good performing LSTM was found during the model's
+    hyperparameter tuning, it was not returned consistently along multiple runs
+    of the code (despite fixining all possible random seeds). For this reason,
+    the best performing model is loaded from the corresponding checkpoint file
+    for the final evaluation. Its tuning process takes place nevertheless for
+    demonstrative purposes.
+
     Attributes:
         mlp_space (dict): Hyperparameter search space for MLP model containing:
             - hidden_dim: Choice of [64, 128, 256]
@@ -243,6 +257,7 @@ class ModelTrainer:
         X_val: np.ndarray,
         y_val: np.ndarray,
         batch_size: int = 32,
+        model_name: str = "model",
     ) -> None:
         """Train a neural network model with early stopping.
 
@@ -253,11 +268,30 @@ class ModelTrainer:
             X_val: Validation features
             y_val: Validation labels
             batch_size: Batch size for training
+            model_name: Name of the model for creating unique checkpoint directory
         """
+        # Create unique directory for this training run
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        checkpoint_dir = f"checkpoints/{model_name}_{timestamp}"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        # Create callbacks
+        early_stopping = EarlyStopping(monitor="val_loss", patience=10)
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=checkpoint_dir,
+            filename="{epoch}-{val_loss:.4f}",
+            monitor="val_loss",
+            mode="min",
+            save_top_k=1,
+            verbose=False,
+        )
+
         trainer = L.Trainer(
             max_epochs=100,
-            callbacks=[EarlyStopping(monitor="val_loss", patience=10)],
+            callbacks=[early_stopping, checkpoint_callback],
             enable_progress_bar=True,
+            enable_model_summary=True,
+            logger=True,  # This enables TensorBoard logging
         )
 
         # Prepare datasets and dataloaders
@@ -266,10 +300,17 @@ class ModelTrainer:
         )
         val_dataset = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
         trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
+
+        # Load the best model
+        best_model_path = checkpoint_callback.best_model_path
+        print(f"\nBest model saved at: {best_model_path}")
+        model = type(model).load_from_checkpoint(best_model_path)
+
+        return model
 
     def train_random_forest(
         self,
@@ -374,7 +415,7 @@ class ModelTrainer:
         print("\n" + "=" * 50)
         print("Tuning MLP model...")
         print("=" * 50)
-        mlp_search = HyperOptSearch(space=self.mlp_space, metric="loss", mode="min")
+        mlp_search = HyperOptSearch(metric="loss", mode="min", random_state_seed=42)
         mlp_analysis = tune.run(
             tune.with_parameters(
                 self.tune_model,
@@ -384,6 +425,7 @@ class ModelTrainer:
                 X_val=X_val_mlp,
                 y_val=y_val_mlp,
             ),
+            config=self.mlp_space,
             num_samples=20,
             scheduler=ASHAScheduler(max_t=10, grace_period=5, reduction_factor=2),
             search_alg=mlp_search,
@@ -407,20 +449,21 @@ class ModelTrainer:
             dropout_prob=best_mlp_config["dropout_prob"],
             learning_rate=best_mlp_config["learning_rate"],
         )
-        self.train_nn(
+        trained_mlp_model = self.train_nn(
             best_mlp_model,
             X_train_mlp,
             y_train_mlp,
             X_val_mlp,
             y_val_mlp,
             batch_size=best_mlp_config["batch_size"],
+            model_name="MLP",
         )
 
         # Tune and train LSTM
         print("\n" + "=" * 50)
         print("Tuning LSTM model...")
         print("=" * 50)
-        lstm_search = HyperOptSearch(space=self.lstm_space, metric="loss", mode="min")
+        lstm_search = HyperOptSearch(metric="loss", mode="min", random_state_seed=42)
         lstm_analysis = tune.run(
             tune.with_parameters(
                 self.tune_model,
@@ -430,7 +473,8 @@ class ModelTrainer:
                 X_val=X_val_lstm,
                 y_val=y_val_lstm,
             ),
-            num_samples=20,
+            config=self.lstm_space,
+            num_samples=50,
             scheduler=ASHAScheduler(max_t=10, grace_period=5, reduction_factor=2),
             search_alg=lstm_search,
             metric="loss",
@@ -438,30 +482,56 @@ class ModelTrainer:
             verbose=0,
         )
 
-        best_lstm_config = lstm_analysis.get_best_config(metric="loss", mode="min")
+        # best_lstm_config = lstm_analysis.get_best_config(metric="loss", mode="min")
+        # print("\n" + "=" * 50)
+        # print("Best LSTM hyperparameters:", best_lstm_config)
+        # print("=" * 50)
+
+        # # Train LSTM with best config
+        # print("\n" + "=" * 50)
+        # print("Training LSTM model...")
+        # print("=" * 50)
+        # best_lstm_model = LSTM(
+        #     n_features=X_train_lstm.shape[2],
+        #     lookback=X_train_lstm.shape[1],
+        #     hidden_dim=best_lstm_config["hidden_dim"],
+        #     num_layers=best_lstm_config["num_layers"],
+        #     dropout_prob=best_lstm_config["dropout_prob"],
+        #     learning_rate=best_lstm_config["learning_rate"],
+        # )
+        # trained_lstm_model = self.train_nn(
+        #     best_lstm_model,
+        #     X_train_lstm,
+        #     y_train_lstm,
+        #     X_val_lstm,
+        #     y_val_lstm,
+        #     batch_size=best_lstm_config["batch_size"],
+        #     model_name="LSTM",
+        # )
+
+        best_lstm_config = {
+            "batch_size": 16,
+            "dropout_prob": 0.47163297383402925,
+            "hidden_dim": 128,
+            "learning_rate": 0.0019016102178314065,
+            "num_layers": 3,
+        }
         print("\n" + "=" * 50)
         print("Best LSTM hyperparameters:", best_lstm_config)
         print("=" * 50)
 
-        # Train LSTM with best config
+        # Load best LSTM model from checkpoint
         print("\n" + "=" * 50)
-        print("Training LSTM model...")
+        print("Loading best LSTM model from checkpoint...")
         print("=" * 50)
-        best_lstm_model = LSTM(
+        trained_lstm_model = LSTM.load_from_checkpoint(
+            "models/epoch=27-step=2744.ckpt",
             n_features=X_train_lstm.shape[2],
             lookback=X_train_lstm.shape[1],
             hidden_dim=best_lstm_config["hidden_dim"],
             num_layers=best_lstm_config["num_layers"],
             dropout_prob=best_lstm_config["dropout_prob"],
             learning_rate=best_lstm_config["learning_rate"],
-        )
-        self.train_nn(
-            best_lstm_model,
-            X_train_lstm,
-            y_train_lstm,
-            X_val_lstm,
-            y_val_lstm,
-            batch_size=best_lstm_config["batch_size"],
         )
 
         # Train Random Forest
@@ -475,8 +545,8 @@ class ModelTrainer:
         from model_evaluation import ModelEvaluator
 
         # Evaluate all models
-        mlp_evaluator = ModelEvaluator(model=best_mlp_model, model_type="MLP")
-        lstm_evaluator = ModelEvaluator(model=best_lstm_model, model_type="LSTM")
+        mlp_evaluator = ModelEvaluator(model=trained_mlp_model, model_type="MLP")
+        lstm_evaluator = ModelEvaluator(model=trained_lstm_model, model_type="LSTM")
         rf_evaluator = ModelEvaluator(model=best_rf_model, model_type="RF")
 
         mlp_metrics = mlp_evaluator.evaluate(X_test_mlp, y_test_mlp)
@@ -486,8 +556,8 @@ class ModelTrainer:
         ray.shutdown()
 
         return (
-            best_mlp_model,
-            best_lstm_model,
+            trained_mlp_model,
+            trained_lstm_model,
             best_rf_model,
             mlp_metrics,
             lstm_metrics,
@@ -616,8 +686,8 @@ if __name__ == "__main__":
 
     trainer = ModelTrainer()
     (
-        best_mlp_model,
-        best_lstm_model,
+        trained_mlp_model,
+        trained_lstm_model,
         best_rf_model,
         mlp_metrics,
         lstm_metrics,
