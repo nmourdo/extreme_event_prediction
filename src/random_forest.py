@@ -1,14 +1,24 @@
+"""Random Forest tuning and training for financial time series classification.
+
+This module provides tools for hyperparameter optimization and training of Random Forest
+models. It uses Hyperopt for Bayesian optimization of hyperparameters, optimizing for
+the F2 score to emphasize recall over precision in extreme event prediction.
+
+Classes:
+    RandomForestOptimizer: Handles hyperparameter optimization and model training
+
+Features:
+    - Model automatically handles class imbalance
+    - Uses scikit-learn's RandomForestClassifier as base implementation
+"""
+
 import pickle
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import fbeta_score
 import numpy as np
 import random
-
-try:
-    from src.data_preprocessing import StockDataPreprocessor
-except ModuleNotFoundError:
-    from data_preprocessing import StockDataPreprocessor
+from data_preprocessing import StockDataPreprocessor
 
 
 class RandomForestOptimizer:

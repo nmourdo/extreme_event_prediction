@@ -1,3 +1,30 @@
+"""Financial time series data preprocessing utilities for machine learning applications.
+
+This module provides tools for downloading, cleaning, and preparing financial time series
+data for machine learning tasks, for extreme event prediction. It handles
+data standardization, feature engineering, and time series sequence creation.
+
+Classes:
+    StockDataPreprocessor: Main class for handling all preprocessing steps
+
+Features:
+    - Automated data download from Yahoo Finance
+    - Extreme event labeling (>2% price movements)
+    - Data standardization
+    - Train/validation/test splitting with chronological ordering
+    - Technical indicator calculation
+        * Rolling volatility
+        * Relative volume
+        * VIX integration
+        * Bollinger Bands
+        * Average True Range (ATR)
+    - Time series to supervised learning conversion
+    - Sequence creation for deep learning models
+
+Notes:
+    - NaN values are handled automatically in each processing step
+"""
+
 import yfinance as yf
 import pandas as pd
 import numpy as np

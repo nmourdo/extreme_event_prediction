@@ -1,3 +1,20 @@
+"""Temporal Convolutional Neural Network implementation for time series classification.
+
+This module provides implementations of TCNN (Temporal Convolutional Neural Network)
+models for binary classification of financial time series data. It includes:
+
+Classes:
+    TCNNClassifier: High-level wrapper for training and visualization
+    TCNN: PyTorch Lightning implementation of the neural network
+
+Features:
+    - PyTorch Lightning for hardware acceleration and training utilities
+    - Class imbalance handling through weighted loss
+    - Automatic learning rate adjustment using ReduceLROnPlateau
+    - Early stopping and model checkpointing
+    - Training visualization utilities
+"""
+
 import numpy as np
 import random
 import lightning as L
@@ -6,14 +23,37 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from torch.utils.data import DataLoader, TensorDataset
-
-try:
-    from src.data_preprocessing import StockDataPreprocessor
-except ModuleNotFoundError:
-    from data_preprocessing import StockDataPreprocessor
+from data_preprocessing import StockDataPreprocessor
 
 
 class TCNNClassifier:
+    """Temporal Convolutional Neural Network (TCNN) Classifier for time series data.
+
+    This class provides a wrapper around the TCNN model with utilities for training
+    and visualization. It uses PyTorch Lightning for training with automatic
+    hardware acceleration, early stopping, and model checkpointing.
+
+    Args:
+        n_features (int): Number of input features
+        lookback (int): Number of timesteps to look back
+        hidden_dim (int, optional): Dimension of hidden feed-forward layer. Defaults to 128.
+        learning_rate (float, optional): Learning rate for optimizer. Defaults to 1e-4.
+        dropout_prob (float, optional): Dropout probability. Defaults to 0.3.
+        conv_channels (int, optional): Number of channels in first conv layer. Defaults to 64.
+        kernel_size (int, optional): Size of convolutional kernel. Defaults to 3.
+        scheduler_patience (int, optional): Epochs before learning rate reduction. Defaults to 5.
+        scheduler_factor (float, optional): Factor to reduce learning rate. Defaults to 0.5.
+        min_lr (float, optional): Minimum learning rate. Defaults to 1e-6.
+
+    Attributes:
+        model (TCNN): The underlying TCNN model instance
+
+    Example:
+        >>> classifier = TCNNClassifier(n_features=6, lookback=10)
+        >>> checkpoint = classifier.train(X_train, y_train, X_val, y_val)
+        >>> classifier.plot_training_history()
+    """
+
     def __init__(
         self,
         n_features: int,
@@ -33,7 +73,7 @@ class TCNNClassifier:
         Args:
             n_features: Number of input features
             lookback: Number of timesteps to look back
-            hidden_dim: Dimension of hidden layer
+            hidden_dim: Dimension of hidden feed-forward layer
             learning_rate: Learning rate for optimizer
             dropout_prob: Dropout probability
             conv_channels: Number of channels in first conv layer
@@ -41,6 +81,7 @@ class TCNNClassifier:
             scheduler_patience: Number of epochs with no improvement after which learning rate will be reduced
             scheduler_factor: Factor by which the learning rate will be reduced
             min_lr: Minimum learning rate
+
         """
         self.model = TCNN(
             n_features=n_features,
@@ -65,7 +106,25 @@ class TCNNClassifier:
         max_epochs: int = 100,
         patience: int = 10,
     ) -> ModelCheckpoint:
-        """Train the model with early stopping and model checkpointing."""
+        """Train the model with early stopping and model checkpointing.
+
+        Args:
+            X_train (np.ndarray): Training features of shape (n_samples, n_features, lookback)
+            y_train (np.ndarray): Training labels of shape (n_samples,)
+            X_val (np.ndarray): Validation features of shape (n_samples, n_features, lookback)
+            y_val (np.ndarray): Validation labels of shape (n_samples,)
+            batch_size (int, optional): Number of samples per batch. Defaults to 32.
+            max_epochs (int, optional): Maximum number of training epochs. Defaults to 100.
+            patience (int, optional): Number of epochs to wait before early stopping. Defaults to 10.
+
+        Returns:
+            ModelCheckpoint: Callback containing information about the best saved model
+
+        Notes:
+            - The model is automatically saved to 'checkpoints' directory
+            - Training logs are saved to 'logs' directory
+            - Uses automatic hardware acceleration (CPU/GPU/TPU)
+        """
         # Numpy arrays to torch tensors
         train_dataset = TensorDataset(
             torch.FloatTensor(X_train), torch.FloatTensor(y_train)
@@ -109,7 +168,19 @@ class TCNNClassifier:
         return checkpoint_callback
 
     def plot_training_history(self) -> None:
-        """Plot training and validation losses."""
+        """Plot the training and validation loss history.
+
+        Creates a matplotlib figure showing:
+        - Training loss curve in blue
+        - Validation loss curve in red
+        - Both curves aligned to show actual validation frequency
+        - Grid and legend for better readability
+
+        The plot is automatically displayed using plt.show()
+
+        Raises:
+            AttributeError: If called before training the model
+        """
         plt.figure(figsize=(10, 6))
 
         # Plot raw losses
@@ -134,6 +205,34 @@ class TCNNClassifier:
 
 
 class TCNN(L.LightningModule):
+    """Temporal Convolutional Neural Network (TCNN) implementation.
+
+    A TCNN for binary classification of time series data.
+    The architecture consists of two 1D convolutional layers followed by dense layers,
+    with ReLU activations and dropout for regularization.
+
+    Args:
+        n_features (int): Number of input features
+        lookback (int): Number of timesteps to look back
+        hidden_dim (int, optional): Dimension of hidden dense layer. Defaults to 128.
+        conv_channels (int, optional): Number of channels in first conv layer. Defaults to 64.
+        kernel_size (int, optional): Size of convolutional kernel. Defaults to 3.
+        dropout_prob (float, optional): Dropout probability. Defaults to 0.3.
+        learning_rate (float, optional): Learning rate for optimizer. Defaults to 1e-4.
+        scheduler_patience (int, optional): Epochs before learning rate reduction. Defaults to 5.
+        scheduler_factor (float, optional): Factor to reduce learning rate. Defaults to 0.5.
+        min_lr (float, optional): Minimum learning rate. Defaults to 1e-6.
+
+    Attributes:
+        learning_rate (float): Current learning rate
+        scheduler_patience (int): Patience for learning rate scheduler
+        scheduler_factor (float): Reduction factor for learning rate
+        min_lr (float): Minimum learning rate threshold
+        train_losses (list): History of training losses
+        val_losses (list): History of validation losses
+        cnn (nn.Sequential): The neural network architecture
+    """
+
     def __init__(
         self,
         n_features: int,
@@ -206,11 +305,35 @@ class TCNN(L.LightningModule):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass of the model."""
+        """Forward pass of the model.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, n_features, lookback)
+
+        Returns:
+            torch.Tensor: Model predictions of shape (batch_size, 1) after sigmoid activation
+        """
         x = self.cnn(x)
-        return torch.sigmoid(x)  # Add sigmoid activation here
+        return torch.sigmoid(x)
 
     def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Performs a single training step.
+
+        Implements weighted BCE loss to handle class imbalance, with weight clamping
+        to prevent extreme values.
+
+        Args:
+            batch (tuple): Tuple of (features, labels)
+            batch_idx (int): Index of current batch
+
+        Returns:
+            torch.Tensor: Weighted binary cross-entropy loss
+
+        Notes:
+            - Automatically logs training loss
+            - Implements dynamic class weighting based on batch statistics
+            - Clamps positive class weight to maximum of 10.0
+        """
         x, y = batch
         y_hat = self(x)
 
@@ -234,19 +357,44 @@ class TCNN(L.LightningModule):
         return loss
 
     def validation_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Performs a single validation step.
+
+        Args:
+            batch (tuple): Tuple of (features, labels)
+            batch_idx (int): Index of current batch
+
+        Returns:
+            torch.Tensor: Binary cross-entropy loss
+
+        Notes:
+            - Automatically logs validation loss at epoch level
+            - Uses unweighted BCE loss for validation (unlike training) to get
+              unbiased performance estimates on real-world data
+        """
         x, y = batch
         y_hat = self(x)
         loss = nn.BCELoss()(y_hat, y.float().view(-1, 1))
         self.val_losses.append(loss.item())
-        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
     def configure_optimizers(self) -> dict:
-        """
-        Configures the optimizer and learning rate scheduler.
+        """Configures the optimizer and learning rate scheduler.
+
+        Sets up AdamW optimizer with weight decay and ReduceLROnPlateau scheduler
+        for learning rate adjustment based on validation loss.
 
         Returns:
-            dict: Configuration dictionary for optimizer and scheduler
+            dict: Configuration containing:
+                - optimizer: AdamW optimizer with weight decay
+                - lr_scheduler: Dict with scheduler configuration
+                    - scheduler: ReduceLROnPlateau instance
+                    - monitor: Metric to monitor ('val_loss')
+                    - frequency: Update frequency (1)
+
+        Notes:
+            - Scheduler reduces learning rate when validation loss plateaus
+            - Learning rate will not go below min_lr
         """
         # Add weight decay for regularization
         optimizer = torch.optim.AdamW(
@@ -284,8 +432,8 @@ if __name__ == "__main__":
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"
     )
     stock_prices = preprocessor.download_and_prepare_stock_data()
-    # Standardize the features except for the daily returns,
-    # which is already in a similar scale
+    # Standardize the features except for the daily returns, which is
+    # already in a similar scale
     stock_prices = preprocessor.standardize_data(
         stock_prices, ["Open", "High", "Low", "Close", "Volume"]
     )
@@ -299,7 +447,7 @@ if __name__ == "__main__":
         val_ratio=0.85,
     )
 
-    # Convert the features into sequences
+    # Convert the features into sequences of shape (n_samples, n_features, n_lookback)
     X_train, y_train = preprocessor.create_sequences(X_train, y_train, lookback=10)
     X_val, y_val = preprocessor.create_sequences(X_val, y_val, lookback=10)
     X_test, y_test = preprocessor.create_sequences(X_test, y_test, lookback=10)
@@ -317,6 +465,9 @@ if __name__ == "__main__":
         scheduler_factor=0.5,
         min_lr=1e-6,
     )
+    print("-" * 50)
+    print("Training TCNN model...")
+    print("-" * 50)
     checkpoint_callback = tcnn_classifier.train(
         X_train, y_train, X_val, y_val, batch_size=32, max_epochs=100, patience=20
     )
