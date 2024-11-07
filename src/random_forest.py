@@ -13,12 +13,18 @@ Features:
 """
 
 import pickle
+import random
+
+import numpy as np
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import fbeta_score
-import numpy as np
-import random
+
 from data_preprocessing import StockDataPreprocessor
+
+# Set random seeds for reproducibility
+np.random.seed(42)
+random.seed(42)
 
 
 class RandomForestOptimizer:
@@ -242,10 +248,6 @@ class RandomForestOptimizer:
 
 if __name__ == "__main__":
 
-    # Set random seeds for reproducibility
-    np.random.seed(42)
-    random.seed(42)
-
     # Initialize data preprocessor and load data
     preprocessor = StockDataPreprocessor(
         ticker="AAPL", start_date="2015-01-01", end_date="2024-01-31"
@@ -285,4 +287,4 @@ if __name__ == "__main__":
     print("-" * 50)
     print("Saving final model...")
     print("-" * 50)
-    rf_optimizer.save_model("best_random_forest.pkl")
+    rf_optimizer.save_model("models/best_random_forest.pkl")

@@ -1,10 +1,44 @@
+"""Model evaluation utilities for time series classification models.
+
+This module provides tools for evaluating and comparing different machine learning models
+(Random Forest, TCNN, LSTM) trained for time series classification tasks.
+It focuses on metrics particularly relevant for imbalanced data and extreme event prediction.
+
+Classes:
+    ModelEvaluator: Unified interface for evaluating different model types
+
+Features:
+    - Support for multiple model architectures:
+        * Random Forest
+        * Temporal CNN (TCNN)
+        * LSTM
+    - Comprehensive evaluation metrics:
+        * F2 Score 
+        * F1 Score
+        * Precision and Recall
+        * ROC AUC
+        * Balanced Accuracy
+    - Visualization utilities:
+        * Confusion matrices
+        * Side-by-side model comparisons
+
+Notes:
+    - Different models may require different input shapes:
+        * Random Forest: 2D array (samples, features)
+        * TCNN: 3D array (samples, features, timesteps)
+        * LSTM: 3D array (samples, timesteps, features)
+    - Metrics like balanced accuracy and AUC account for class imbalance.
+    
+"""
+
 import pickle
+from typing import Union
+
 import numpy as np
 import random
 import seaborn as sns
 import matplotlib.pyplot as plt
 import torch
-from typing import Union
 from sklearn.ensemble import RandomForestClassifier
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import (
@@ -17,14 +51,9 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 
-try:
-    from src.data_preprocessing import StockDataPreprocessor
-    from src.temporal_cnn import TCNN
-    from src.improvement import LSTM
-except ModuleNotFoundError:
-    from data_preprocessing import StockDataPreprocessor
-    from temporal_cnn import TCNN
-    from improvement import LSTM
+from data_preprocessing import StockDataPreprocessor
+from temporal_cnn import TCNN
+from improvement import LSTM
 
 
 class ModelEvaluator:
@@ -43,7 +72,7 @@ class ModelEvaluator:
         model_type : str
             The type of model being evaluated. Must be either 'RF' for Random Forest, 'TCNN' for Temporal CNN or 'LSTM' for LSTM.
         batch_size : int, optional
-            Batch size for PyTorch model evaluation, by default 32. Only used when model_type is 'TCNN'.
+            Batch size for PyTorch model evaluation, by default 32. Only used when model_type is 'TCNN' or 'LSTM'.
         """
         self.model = model
         self.model_type = model_type
@@ -60,8 +89,10 @@ class ModelEvaluator:
         Parameters
         ----------
         X : np.ndarray
-            Input features to make predictions on. For Random Forest, this should be a 2D array.
-            For TCNN, this should be a 3D array with shape (samples, timesteps, features).
+            Input features to make predictions on.
+            For Random Forest, this should be a 2D array.
+            For TCNN this should be a 3D array with shape (samples, features, timesteps).
+            For LSTM this should be a 3D array with shape (samples, timesteps, features).
 
         Returns
         -------
@@ -100,8 +131,10 @@ class ModelEvaluator:
         Parameters
         ----------
         X : np.ndarray
-            Input features. For Random Forest, this should be a 2D array.
-            For TCNN, this should be a 3D array with shape (samples, timesteps, features).
+            Input features to make predictions on.
+            For Random Forest, this should be a 2D array.
+            For TCNN this should be a 3D array with shape (samples, features, timesteps).
+            For LSTM this should be a 3D array with shape (samples, timesteps, features).
         y : np.ndarray
             True labels (0 or 1) for each input sample.
 
@@ -307,8 +340,7 @@ if __name__ == "__main__":
         dropout_prob=0.3,
         learning_rate=1e-4,
     )
-    nn.load_state_dict(torch.load("models/best_nn.pth"))
-    nn.eval()
+    nn.load_state_dict(torch.load("models/best_tcnn.pth"))
     nn_evaluator = ModelEvaluator(model=nn, model_type="TCNN")
 
     # Prepare evaluators and data dictionaries

@@ -25,10 +25,11 @@ Notes:
     - NaN values are handled automatically in each processing step
 """
 
+from typing import Tuple
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from typing import Tuple
 from sklearn.preprocessing import StandardScaler
 
 

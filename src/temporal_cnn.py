@@ -13,17 +13,33 @@ Features:
     - Automatic learning rate adjustment using ReduceLROnPlateau
     - Early stopping and model checkpointing
     - Training visualization utilities
+
+Note:
+    - The best performing TCNN was not returned consistently along multiple runs
+    of the code (despite fixining all possible random seeds). For this reason,
+    the best performing model was saved and is used for the final evaluation in the
+    `model_evaluation.py` module.
+
 """
 
-import numpy as np
 import random
+
+import numpy as np
 import lightning as L
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from torch.utils.data import DataLoader, TensorDataset
+
 from data_preprocessing import StockDataPreprocessor
+
+# Set seeds for reproducibility
+RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
+torch.manual_seed(RANDOM_SEED)
+L.seed_everything(RANDOM_SEED)
 
 
 class TCNNClassifier:
@@ -422,10 +438,6 @@ class TCNN(L.LightningModule):
 
 
 if __name__ == "__main__":
-    # Set random seeds for reproducibility
-    np.random.seed(42)
-    random.seed(42)
-    torch.manual_seed(42)
 
     # Initialize data preprocessor and load data
     preprocessor = StockDataPreprocessor(
