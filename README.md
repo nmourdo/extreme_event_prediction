@@ -103,8 +103,5 @@ See `src/report.ipynb` for detailed analysis.
 ## Reproducibility
 
 Random seeds are set in each script for reproducibility. Key parameters:
-- Training/Validation/Test split: 70%/15%/15%
-- Lookback period: 10 days
-- Extreme event threshold: 2% price movement
 
-We should note that the best neural network models (TCNN and LSTM) have been saved in the repository and are used in the evaluation scripts and the report notebook. This is because even though all seeds are set, they were not retrieved across multiple runs.
+It is noted that the best neural network models (TCNN and LSTM) have been saved in the repository and are used in the evaluation scripts and the report notebook. This is because even though all seeds are set, they were not retrieved across multiple runs.
