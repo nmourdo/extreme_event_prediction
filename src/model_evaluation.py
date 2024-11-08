@@ -310,7 +310,7 @@ if __name__ == "__main__":
     X_test, y_test = preprocessor.time_series_to_supervised(X_test, y_test, lookback=10)
 
     rf_evaluator = ModelEvaluator(
-        model=pickle.load(open("models/best_random_forest.pkl", "rb")),
+        model=pickle.load(open("./data/models/best_random_forest.pkl", "rb")),
         model_type="RF",
     )
 
@@ -340,7 +340,7 @@ if __name__ == "__main__":
         dropout_prob=0.3,
         learning_rate=1e-4,
     )
-    nn.load_state_dict(torch.load("models/best_tcnn.pth"))
+    nn.load_state_dict(torch.load("./data/models/best_tcnn.pth"))
     nn_evaluator = ModelEvaluator(model=nn, model_type="TCNN")
 
     # Prepare evaluators and data dictionaries

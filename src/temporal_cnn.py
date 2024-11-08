@@ -12,6 +12,7 @@ Features:
     - Class imbalance handling through weighted loss
     - Automatic learning rate adjustment using ReduceLROnPlateau
     - Early stopping and model checkpointing
+    - Hyperparameters of the best model and training history are saved to CSV files automatically
     - Training visualization utilities
 
 Note:

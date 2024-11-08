@@ -41,6 +41,7 @@ Features:
         * Weighted loss functions for neural networks
         * Balanced class weights for Random Forest
     - Automated model checkpointing and early stopping
+    - Hyperparameters of the best model and training history are saved to CSV files automatically
     - Model comparison and visualization
 
 Notes:
@@ -541,7 +542,7 @@ class ModelTrainer:
         print("Loading best LSTM model from checkpoint...")
         print("=" * 50)
         trained_lstm_model = LSTM.load_from_checkpoint(
-            "models/best_lstm.ckpt",
+            "./data/models/best_lstm.ckpt",
             n_features=X_train_lstm.shape[2],
             lookback=X_train_lstm.shape[1],
             hidden_dim=best_lstm_config["hidden_dim"],

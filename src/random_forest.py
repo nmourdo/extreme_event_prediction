@@ -287,4 +287,4 @@ if __name__ == "__main__":
     print("-" * 50)
     print("Saving final model...")
     print("-" * 50)
-    rf_optimizer.save_model("models/best_random_forest.pkl")
+    rf_optimizer.save_model("./data/models/best_random_forest.pkl")
