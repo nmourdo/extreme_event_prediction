@@ -40,6 +40,8 @@ random.seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 L.seed_everything(RANDOM_SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 
 class TCNNClassifier:
@@ -174,6 +176,7 @@ class TCNNClassifier:
             accelerator="auto",
             devices=1,
             logger=logger,
+            log_every_n_steps=10,
         )
 
         # Train model
