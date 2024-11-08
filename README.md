@@ -55,7 +55,7 @@ poetry run python src/temporal_cnn.py
 poetry run python src/model_evaluation.py
 ```
 
-3. Train the random forest, MLP and LSTM models with extra features and evaluate them:
+4. Train the random forest, MLP and LSTM models with extra features and evaluate them:
 ```bash
 poetry run python src/improvement.py
 ```
