@@ -355,8 +355,8 @@ class ModelTrainer:
 
         return model
 
+    @staticmethod
     def tune_model(
-        self,
         config: dict,
         model_class: Type[BaseModel],
         X_train: np.ndarray,
