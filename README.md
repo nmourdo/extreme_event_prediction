@@ -19,7 +19,8 @@ This project implements machine learning models to predict extreme events (>2% d
 ├── report.pdf            # PDF version of the report notebook
 ├── README.md
 ├── pyproject.toml      # Poetry dependencies
-└── poetry.lock        # Poetry lock file
+├── poetry.lock        # Poetry lock file
+└── .gitignore        # Git ignore file
 ```
 
 ## Setup Instructions
