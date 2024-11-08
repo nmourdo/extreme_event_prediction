@@ -31,6 +31,7 @@ This project implements machine learning models to predict extreme events (>2% d
 ```bash
 git clone https://github.com/nmourdo/ai2c_assignment
 cd ai2c_assignment
+poetry env use python3.10
 poetry install
 ```
 
