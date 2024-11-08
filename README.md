@@ -50,7 +50,7 @@ poetry run python src/random_forest.py
 poetry run python src/temporal_cnn.py
 ```
 
-3. Evaluate and compare models the random forest and the TCNN models:
+3. Evaluate and compare the random forest and the TCNN models:
 ```bash
 poetry run python src/model_evaluation.py
 ```
