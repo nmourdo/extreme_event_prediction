@@ -65,6 +65,9 @@ poetry run python src/improvement.py
 ```bash
 poetry run python src/model_evaluation.py
 ```
+## Documentation
+
+The code has been thoroughly documented with docstrings, type hints and comments on multiple levels (module, class and function).
 
 ## Dependencies
 
