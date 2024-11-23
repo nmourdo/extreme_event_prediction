@@ -16,7 +16,7 @@ import pickle
 import random
 
 import numpy as np
-from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, STATUS_FAIL
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import fbeta_score
 
@@ -106,27 +106,32 @@ class RandomForestOptimizer:
                 - loss: Negative F2 score (to minimize)
                 - status: Optimization status
         """
-        # Get current hyperparameters
-        model_params = self._process_params(params)
-        # Add fixed parameters
-        model_params.update(
-            {
-                "criterion": "entropy",
-                "class_weight": "balanced",
-                "bootstrap": True,
-                "random_state": 42,
-                "n_jobs": -1,
-            }
-        )
-        # Train model
-        model = RandomForestClassifier(**model_params)
-        model.fit(self.X_train, self.y_train)
+        try:
+            # Get current hyperparameters
+            model_params = self._process_params(params)
+            # Add fixed parameters
+            model_params.update(
+                {
+                    "criterion": "entropy",
+                    "class_weight": "balanced",
+                    "bootstrap": True,
+                    "random_state": 42,
+                    "n_jobs": -1,
+                }
+            )
+            # Train model
+            model = RandomForestClassifier(**model_params)
+            model.fit(self.X_train, self.y_train)
 
-        # Make predictions on the validation set
-        y_pred = model.predict(self.X_val)
-        f2 = fbeta_score(self.y_val, y_pred, beta=2)
+            # Make predictions on the validation set
+            y_pred = model.predict(self.X_val)
+            f2 = fbeta_score(self.y_val, y_pred, beta=2)
 
-        return {"loss": -f2, "status": STATUS_OK}
+            return {"loss": -f2, "status": STATUS_OK}
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            return {"loss": float("inf"), "status": STATUS_FAIL}
 
     def optimize(
         self,
